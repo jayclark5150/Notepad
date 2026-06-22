@@ -15,6 +15,8 @@ PLIST    = $(BUNDLE)/Contents/Info.plist
 ICNS_SRC = Notepad.icns
 ICNS_DST = $(BUNDLE)/Contents/Resources/Notepad.icns
 SRC      = main.mm
+ENTITLE  = Notepad.entitlements
+SIGN_ID  = -
 
 CXX      = clang++
 ARCH     = arm64
@@ -35,7 +37,7 @@ LDFLAGS  = -arch $(ARCH) \
 
 .PHONY: all run clean
 
-all: $(BINARY) $(PLIST) $(ICNS_DST)
+all: $(BINARY) $(PLIST) $(ICNS_DST) codesign
 
 $(BUNDLE)/Contents/MacOS:
 	mkdir -p $@
@@ -50,6 +52,11 @@ $(ICNS_DST): $(ICNS_SRC) | $(BUNDLE)/Contents/MacOS
 $(PLIST): Info.plist | $(BUNDLE)/Contents/MacOS
 	mkdir -p $(BUNDLE)/Contents
 	cp Info.plist $@
+
+.PHONY: codesign
+codesign: $(BINARY) $(PLIST)
+	codesign --force --options runtime --entitlements $(ENTITLE) --sign $(SIGN_ID) $(BUNDLE)
+
 
 run: all
 	open $(BUNDLE)

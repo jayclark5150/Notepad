@@ -6,6 +6,7 @@
 
 #import <Cocoa/Cocoa.h>
 #import <Foundation/Foundation.h>
+#include <sys/stat.h>
 
 // ============================================================
 // MARK: - Line Number Ruler View
@@ -550,6 +551,20 @@ static const CGFloat kRulerWidth = 50.0;
     if ([panel runModal] != NSModalResponseOK) return;
 
     NSString *path = panel.URL.path;
+
+    static const long long kMaxFileSize = 100LL * 1024 * 1024; // 100 MB
+    struct stat st;
+    if (stat(path.fileSystemRepresentation, &st) == 0 && st.st_size > kMaxFileSize) {
+        NSAlert *sizeAlert = [[NSAlert alloc] init];
+        sizeAlert.messageText = @"File Too Large";
+        sizeAlert.informativeText = [NSString stringWithFormat:
+            @"This file is %lld MB. Opening very large files may use excessive memory. Continue?",
+            st.st_size / (1024 * 1024)];
+        [sizeAlert addButtonWithTitle:@"Cancel"];
+        [sizeAlert addButtonWithTitle:@"Open Anyway"];
+        if ([sizeAlert runModal] == NSAlertFirstButtonReturn) return;
+    }
+
     NSError  *err  = nil;
     NSString *text = [NSString stringWithContentsOfFile:path
                                                encoding:NSUTF8StringEncoding
@@ -593,6 +608,9 @@ static const CGFloat kRulerWidth = 50.0;
 }
 
 - (void)writeToPath:(NSString *)path {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSDictionary *origAttrs = [fm attributesOfItemAtPath:path error:nil];
+
     NSError *err = nil;
     BOOL ok = [_textView.string writeToFile:path
                                  atomically:YES
@@ -602,6 +620,19 @@ static const CGFloat kRulerWidth = 50.0;
         [self showError:[NSString stringWithFormat:@"Could not save:\n%@", err.localizedDescription]];
         return;
     }
+
+    if (origAttrs) {
+        NSMutableDictionary *restore = [NSMutableDictionary dictionary];
+        NSNumber *perms = origAttrs[NSFilePosixPermissions];
+        if (perms) restore[NSFilePosixPermissions] = perms;
+        NSString *owner = origAttrs[NSFileOwnerAccountName];
+        if (owner) restore[NSFileOwnerAccountName] = owner;
+        NSString *group = origAttrs[NSFileGroupOwnerAccountName];
+        if (group) restore[NSFileGroupOwnerAccountName] = group;
+        if (restore.count > 0)
+            [fm setAttributes:restore ofItemAtPath:path error:nil];
+    }
+
     _isDirty = NO;
     [self updateTitle];
 }
@@ -734,7 +765,11 @@ int main(int /*argc*/, const char * /*argv*/[]) {
         AppDelegate *delegate = [[AppDelegate alloc] init];
         app.delegate = delegate;
 
-        [app activateIgnoringOtherApps:YES];
+        if (@available(macOS 14.0, *)) {
+            [app activate];
+        } else {
+            [app activateIgnoringOtherApps:YES];
+        }
         [app run];
     }
     return 0;
