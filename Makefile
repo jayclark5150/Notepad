@@ -44,17 +44,21 @@ $(BUNDLE)/Contents/MacOS:
 
 $(BINARY): $(SRC) | $(BUNDLE)/Contents/MacOS
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $<
+	xattr -c $@
 
 $(ICNS_DST): $(ICNS_SRC) | $(BUNDLE)/Contents/MacOS
 	mkdir -p $(BUNDLE)/Contents/Resources
 	cp $(ICNS_SRC) $@
+	xattr -c $@
 
 $(PLIST): Info.plist | $(BUNDLE)/Contents/MacOS
 	mkdir -p $(BUNDLE)/Contents
 	cp Info.plist $@
+	xattr -c $@
 
 .PHONY: codesign
 codesign: $(BINARY) $(PLIST)
+	xattr -cr $(BUNDLE)
 	codesign --force --options runtime --entitlements $(ENTITLE) --sign $(SIGN_ID) $(BUNDLE)
 
 
