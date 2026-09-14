@@ -6,7 +6,6 @@
 
 #import <Cocoa/Cocoa.h>
 #import <Foundation/Foundation.h>
-#include <sys/stat.h>
 
 // ============================================================
 // MARK: - Line Number Ruler View
@@ -320,6 +319,7 @@ static const CGFloat kRulerWidth = 50.0;
 @property (nonatomic, assign) CGFloat                currentFontSize;
 @property (nonatomic, copy)   NSString              *fontFamily;  // @"mono", @"sans", @"serif"
 @property (nonatomic, assign) CGFloat                currentLineSpacing;
+@property (nonatomic, strong) NSTextField           *statusBar;
 @end
 
 @implementation AppDelegate
@@ -333,6 +333,14 @@ static const CGFloat kRulerWidth = 50.0;
     [self buildMenu];
     [self buildWindow];
     [self.window makeKeyAndOrderFront:nil];
+    if (@available(macOS 14.0, *)) {
+        [NSApp activate];
+    } else {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        [NSApp activateIgnoringOtherApps:YES];
+#pragma clang diagnostic pop
+    }
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)app {
@@ -343,7 +351,7 @@ static const CGFloat kRulerWidth = 50.0;
     if (!_isDirty) return NSTerminateNow;
     NSAlert *alert = [self unsavedChangesAlertWithAction:@"quit"];
     NSModalResponse r = [alert runModal];
-    if (r == NSAlertFirstButtonReturn)  { [self saveDocument:nil]; return NSTerminateNow; }
+    if (r == NSAlertFirstButtonReturn)  { return [self doSave] ? NSTerminateNow : NSTerminateCancel; }
     if (r == NSAlertSecondButtonReturn) { return NSTerminateNow; }
     return NSTerminateCancel;
 }
@@ -363,8 +371,12 @@ static const CGFloat kRulerWidth = 50.0;
     _window.delegate = self;
     [_window center];
 
-    // Scroll view
-    _scrollView = [[NSScrollView alloc] initWithFrame:_window.contentView.bounds];
+    // Scroll view — leave 22 pt at the bottom for the status bar
+    static const CGFloat kStatusBarHeight = 22.0;
+    NSRect cb = _window.contentView.bounds;
+    _scrollView = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, kStatusBarHeight,
+                                                                  cb.size.width,
+                                                                  cb.size.height - kStatusBarHeight)];
     _scrollView.autoresizingMask      = NSViewWidthSizable | NSViewHeightSizable;
     _scrollView.hasVerticalScroller   = YES;
     _scrollView.hasHorizontalScroller = NO;
@@ -409,11 +421,31 @@ static const CGFloat kRulerWidth = 50.0;
 
     [_window.contentView addSubview:_scrollView];
 
+    // Status bar
+    _statusBar = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, cb.size.width, kStatusBarHeight)];
+    _statusBar.editable         = NO;
+    _statusBar.bordered         = NO;
+    _statusBar.drawsBackground  = YES;
+    _statusBar.backgroundColor  = [NSColor controlBackgroundColor];
+    _statusBar.font             = [NSFont monospacedDigitSystemFontOfSize:11.0 weight:NSFontWeightRegular];
+    _statusBar.textColor        = [NSColor secondaryLabelColor];
+    _statusBar.alignment        = NSTextAlignmentCenter;
+    _statusBar.autoresizingMask = NSViewWidthSizable;
+    [_window.contentView addSubview:_statusBar];
+
+    NSBox *separator = [[NSBox alloc] initWithFrame:NSMakeRect(0, kStatusBarHeight - 1,
+                                                                cb.size.width, 1)];
+    separator.boxType          = NSBoxSeparator;
+    separator.autoresizingMask = NSViewWidthSizable;
+    [_window.contentView addSubview:separator];
+
     // Apply initial font / typing attributes
     [self applyFont];
 
     // Find & Replace controller
     _findReplace = [[FindReplaceController alloc] initWithTargetTextView:_textView];
+
+    [self updateStatusBar];
 }
 
 // ── Menu ──────────────────────────────────────────────────
@@ -526,6 +558,7 @@ static const CGFloat kRulerWidth = 50.0;
         [self updateTitle];
     }
     [_rulerView setNeedsDisplay:YES];
+    [self updateStatusBar];
 }
 
 // ── Actions ───────────────────────────────────────────────
@@ -538,6 +571,46 @@ static const CGFloat kRulerWidth = 50.0;
                                          withString:@""];
     [_textView.undoManager removeAllActions];
     [self updateTitle];
+    [self updateStatusBar];
+}
+
+- (BOOL)loadFileAtPath:(NSString *)path {
+    static const long long kMaxFileSize = 100LL * 1024 * 1024; // 100 MB
+    NSNumber *fileSize = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil][NSFileSize];
+    if (fileSize && fileSize.longLongValue > kMaxFileSize) {
+        NSAlert *sizeAlert = [[NSAlert alloc] init];
+        sizeAlert.messageText = @"File Too Large";
+        sizeAlert.informativeText = [NSString stringWithFormat:
+            @"This file is %lld MB. Opening very large files may use excessive memory. Continue?",
+            fileSize.longLongValue / (1024 * 1024)];
+        [sizeAlert addButtonWithTitle:@"Cancel"];
+        [sizeAlert addButtonWithTitle:@"Open Anyway"];
+        if ([sizeAlert runModal] == NSAlertFirstButtonReturn) return NO;
+    }
+
+    NSError  *err  = nil;
+    NSString *text = [NSString stringWithContentsOfFile:path
+                                               encoding:NSUTF8StringEncoding
+                                                  error:&err];
+    if (err) {
+        text = nil; err = nil; // Release before Latin-1 allocation
+        text = [NSString stringWithContentsOfFile:path
+                                         encoding:NSISOLatin1StringEncoding
+                                            error:&err];
+    }
+    if (err || !text) {
+        [self showError:[NSString stringWithFormat:@"Could not open file:\n%@", err.localizedDescription]];
+        return NO;
+    }
+
+    [_textView.textStorage replaceCharactersInRange:NSMakeRange(0, _textView.string.length)
+                                         withString:text];
+    [_textView.undoManager removeAllActions];
+    _currentFilePath = path;
+    _isDirty = NO;
+    [self updateTitle];
+    [self updateStatusBar];
+    return YES;
 }
 
 - (IBAction)openDocument:(id)sender {
@@ -549,67 +622,40 @@ static const CGFloat kRulerWidth = 50.0;
     panel.allowedContentTypes     = @[];   // Any file
 
     if ([panel runModal] != NSModalResponseOK) return;
+    [self loadFileAtPath:panel.URL.path];
+}
 
-    NSString *path = panel.URL.path;
-
-    static const long long kMaxFileSize = 100LL * 1024 * 1024; // 100 MB
-    struct stat st;
-    if (stat(path.fileSystemRepresentation, &st) == 0 && st.st_size > kMaxFileSize) {
-        NSAlert *sizeAlert = [[NSAlert alloc] init];
-        sizeAlert.messageText = @"File Too Large";
-        sizeAlert.informativeText = [NSString stringWithFormat:
-            @"This file is %lld MB. Opening very large files may use excessive memory. Continue?",
-            st.st_size / (1024 * 1024)];
-        [sizeAlert addButtonWithTitle:@"Cancel"];
-        [sizeAlert addButtonWithTitle:@"Open Anyway"];
-        if ([sizeAlert runModal] == NSAlertFirstButtonReturn) return;
-    }
-
-    NSError  *err  = nil;
-    NSString *text = [NSString stringWithContentsOfFile:path
-                                               encoding:NSUTF8StringEncoding
-                                                  error:&err];
-    if (err) {
-        // Try latin-1 fallback
-        text = [NSString stringWithContentsOfFile:path
-                                         encoding:NSISOLatin1StringEncoding
-                                            error:&err];
-    }
-    if (err || !text) {
-        [self showError:[NSString stringWithFormat:@"Could not open file:\n%@", err.localizedDescription]];
-        return;
-    }
-
-    [_textView.textStorage replaceCharactersInRange:NSMakeRange(0, _textView.string.length)
-                                         withString:text];
-    [_textView.undoManager removeAllActions];
-    _currentFilePath = path;
-    _isDirty = NO;
-    [self updateTitle];
+- (BOOL)doSave {
+    return _currentFilePath ? [self writeToPath:_currentFilePath] : [self doSaveAs];
 }
 
 - (IBAction)saveDocument:(id)sender {
-    if (_currentFilePath) {
-        [self writeToPath:_currentFilePath];
-    } else {
-        [self saveDocumentAs:sender];
-    }
+    [self doSave];
 }
 
-- (IBAction)saveDocumentAs:(id)sender {
+- (BOOL)doSaveAs {
     NSSavePanel *panel = [NSSavePanel savePanel];
     panel.nameFieldStringValue = _currentFilePath
         ? _currentFilePath.lastPathComponent
         : @"Untitled.txt";
 
-    if ([panel runModal] != NSModalResponseOK) return;
+    if ([panel runModal] != NSModalResponseOK) return NO;
+    NSString *prevPath = _currentFilePath;
     _currentFilePath = panel.URL.path;
-    [self writeToPath:_currentFilePath];
+    if (![self writeToPath:_currentFilePath]) {
+        _currentFilePath = prevPath;
+        return NO;
+    }
+    return YES;
 }
 
-- (void)writeToPath:(NSString *)path {
+- (IBAction)saveDocumentAs:(id)sender {
+    [self doSaveAs];
+}
+
+- (BOOL)writeToPath:(NSString *)path {
     NSFileManager *fm = [NSFileManager defaultManager];
-    NSDictionary *origAttrs = [fm attributesOfItemAtPath:path error:nil];
+    NSNumber *origPerms = [fm attributesOfItemAtPath:path error:nil][NSFilePosixPermissions];
 
     NSError *err = nil;
     BOOL ok = [_textView.string writeToFile:path
@@ -617,24 +663,25 @@ static const CGFloat kRulerWidth = 50.0;
                                    encoding:NSUTF8StringEncoding
                                       error:&err];
     if (!ok) {
+        // Atomic write creates a temp file in the parent directory; retry without
+        // atomicity if the sandbox denied parent-directory access.
+        err = nil;
+        ok = [_textView.string writeToFile:path
+                                atomically:NO
+                                  encoding:NSUTF8StringEncoding
+                                     error:&err];
+    }
+    if (!ok) {
         [self showError:[NSString stringWithFormat:@"Could not save:\n%@", err.localizedDescription]];
-        return;
+        return NO;
     }
 
-    if (origAttrs) {
-        NSMutableDictionary *restore = [NSMutableDictionary dictionary];
-        NSNumber *perms = origAttrs[NSFilePosixPermissions];
-        if (perms) restore[NSFilePosixPermissions] = perms;
-        NSString *owner = origAttrs[NSFileOwnerAccountName];
-        if (owner) restore[NSFileOwnerAccountName] = owner;
-        NSString *group = origAttrs[NSFileGroupOwnerAccountName];
-        if (group) restore[NSFileGroupOwnerAccountName] = group;
-        if (restore.count > 0)
-            [fm setAttributes:restore ofItemAtPath:path error:nil];
-    }
+    if (origPerms)
+        [fm setAttributes:@{NSFilePosixPermissions: origPerms} ofItemAtPath:path error:nil];
 
     _isDirty = NO;
     [self updateTitle];
+    return YES;
 }
 
 - (IBAction)showFindReplace:(id)sender {
@@ -707,12 +754,24 @@ static const CGFloat kRulerWidth = 50.0;
     if (!_isDirty) return YES;
     NSAlert *alert = [self unsavedChangesAlertWithAction:@"close"];
     NSModalResponse r = [alert runModal];
-    if (r == NSAlertFirstButtonReturn)  { [self saveDocument:nil]; return YES; }
+    if (r == NSAlertFirstButtonReturn)  { return [self doSave]; }
     if (r == NSAlertSecondButtonReturn) { return YES; }
     return NO;
 }
 
 // ── Helpers ───────────────────────────────────────────────
+
+- (void)updateStatusBar {
+    NSString *text = _textView.string ?: @"";
+    NSUInteger chars = text.length;
+    NSUInteger lines = 1;
+    for (NSUInteger i = 0; i < chars; i++) {
+        if ([text characterAtIndex:i] == '\n') lines++;
+    }
+    NSString *version = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"?";
+    _statusBar.stringValue = [NSString stringWithFormat:@"v%@     Lines: %lu     Chars: %lu",
+        version, (unsigned long)lines, (unsigned long)chars];
+}
 
 - (void)updateTitle {
     NSString *name = _currentFilePath ? _currentFilePath.lastPathComponent : @"Untitled";
@@ -765,11 +824,6 @@ int main(int /*argc*/, const char * /*argv*/[]) {
         AppDelegate *delegate = [[AppDelegate alloc] init];
         app.delegate = delegate;
 
-        if (@available(macOS 14.0, *)) {
-            [app activate];
-        } else {
-            [app activateIgnoringOtherApps:YES];
-        }
         [app run];
     }
     return 0;

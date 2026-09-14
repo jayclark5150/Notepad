@@ -16,6 +16,9 @@ ICNS_SRC = Notepad.icns
 ICNS_DST = $(BUNDLE)/Contents/Resources/Notepad.icns
 SRC      = main.mm
 ENTITLE  = Notepad.entitlements
+# Set to a Developer ID for a notarizable, distributable build. Ad-hoc (-) works
+# only on the build machine; Gatekeeper blocks ad-hoc builds received through any
+# quarantine-triggering channel (download, AirDrop, email).
 SIGN_ID  = -
 
 CXX      = clang++
