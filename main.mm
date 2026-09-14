@@ -561,6 +561,10 @@ static const CGFloat kRulerWidth = 50.0;
     [self updateStatusBar];
 }
 
+- (void)textViewDidChangeSelection:(NSNotification *)note {
+    [self updateStatusBar];
+}
+
 // ── Actions ───────────────────────────────────────────────
 
 - (IBAction)newDocument:(id)sender {
@@ -764,13 +768,27 @@ static const CGFloat kRulerWidth = 50.0;
 - (void)updateStatusBar {
     NSString *text = _textView.string ?: @"";
     NSUInteger chars = text.length;
-    NSUInteger lines = 1;
+
+    NSUInteger words = 0;
+    BOOL inWord = NO;
     for (NSUInteger i = 0; i < chars; i++) {
-        if ([text characterAtIndex:i] == '\n') lines++;
+        unichar c = [text characterAtIndex:i];
+        BOOL space = (c == ' ' || c == '\t' || c == '\n' || c == '\r');
+        if (!space && !inWord) { words++; inWord = YES; }
+        else if (space)        { inWord = NO; }
     }
-    NSString *version = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"?";
-    _statusBar.stringValue = [NSString stringWithFormat:@"v%@     Lines: %lu     Chars: %lu",
-        version, (unsigned long)lines, (unsigned long)chars];
+
+    NSRange sel = _textView.selectedRange;
+    NSUInteger pos = (sel.location == NSNotFound) ? 0 : sel.location;
+    NSUInteger ln = 1, col = 1;
+    for (NSUInteger i = 0; i < pos && i < chars; i++) {
+        if ([text characterAtIndex:i] == '\n') { ln++; col = 1; }
+        else                                    { col++; }
+    }
+
+    NSString *ver = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"?";
+    _statusBar.stringValue = [NSString stringWithFormat:@"v%@     Words: %lu     Chars: %lu     Ln %lu, Col %lu",
+        ver, (unsigned long)words, (unsigned long)chars, (unsigned long)ln, (unsigned long)col];
 }
 
 - (void)updateTitle {
