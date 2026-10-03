@@ -6,6 +6,7 @@
 
 #import <Cocoa/Cocoa.h>
 #import <Foundation/Foundation.h>
+#import <WebKit/WebKit.h>
 
 // ============================================================
 // MARK: - Line Number Ruler View
@@ -290,7 +291,7 @@ static const CGFloat kRulerWidth = 50.0;
 // MARK: - Application Delegate / Main Editor Window
 // ============================================================
 
-@interface AppDelegate : NSObject <NSApplicationDelegate, NSTextViewDelegate, NSWindowDelegate>
+@interface AppDelegate : NSObject <NSApplicationDelegate, NSTextViewDelegate, NSWindowDelegate, WKScriptMessageHandler>
 @property (nonatomic, strong) NSWindow              *window;
 @property (nonatomic, strong) NSTextView            *textView;
 @property (nonatomic, strong) NSScrollView          *scrollView;
@@ -303,9 +304,8 @@ static const CGFloat kRulerWidth = 50.0;
 @property (nonatomic, copy)   NSString              *fontFamily;
 @property (nonatomic, assign) CGFloat                currentLineSpacing;
 @property (nonatomic, strong) NSTextField           *statusBar;
-// Markdown preview (NSTextView-based — in-process, no sandbox issues)
-@property (nonatomic, strong) NSScrollView          *previewScrollView;
-@property (nonatomic, strong) NSTextView            *previewTextView;
+// Markdown preview
+@property (nonatomic, strong) WKWebView             *previewWebView;
 @property (nonatomic, strong) NSView                *dividerView;
 @property (nonatomic, strong) NSTimer               *previewTimer;
 @property (nonatomic, strong) NSMenuItem            *previewMenuItem;
@@ -419,33 +419,18 @@ static const CGFloat kRulerWidth = 50.0;
     _dividerView.wantsLayer       = YES;
     _dividerView.hidden           = YES;
 
-    // NSScrollView + NSTextView as the preview pane (in-process rendering,
-    // no WKWebView sandbox/process issues)
-    _previewScrollView = [[NSScrollView alloc] initWithFrame:
-                           NSMakeRect(0, kStatusBarHeight, 0, editH)];
-    _previewScrollView.autoresizingMask      = NSViewHeightSizable;
-    _previewScrollView.hasVerticalScroller   = YES;
-    _previewScrollView.hasHorizontalScroller = NO;
-    _previewScrollView.autohidesScrollers    = YES;
-    _previewScrollView.hidden                = YES;
-
-    NSTextView *ptv = [[NSTextView alloc]
-        initWithFrame:NSMakeRect(0, 0, _previewScrollView.contentSize.width,
-                                 _previewScrollView.contentSize.height)];
-    ptv.autoresizingMask        = NSViewWidthSizable | NSViewHeightSizable;
-    ptv.editable                = NO;
-    ptv.selectable              = YES;
-    ptv.richText                = YES;
-    ptv.backgroundColor         = [NSColor textBackgroundColor];
-    ptv.drawsBackground         = YES;
-    ptv.textContainerInset      = NSMakeSize(20, 20);
-    ptv.automaticLinkDetectionEnabled = YES;
-    _previewScrollView.documentView = ptv;
-    _previewTextView = ptv;
+    WKWebViewConfiguration *wkConfig = [[WKWebViewConfiguration alloc] init];
+    WKUserContentController *ucc = [[WKUserContentController alloc] init];
+    [ucc addScriptMessageHandler:self name:@"copyCode"];
+    wkConfig.userContentController = ucc;
+    _previewWebView = [[WKWebView alloc] initWithFrame:NSMakeRect(0, kStatusBarHeight, 0, editH)
+                                         configuration:wkConfig];
+    _previewWebView.autoresizingMask = NSViewHeightSizable;
+    _previewWebView.hidden           = YES;
 
     [_window.contentView addSubview:_scrollView];
     [_window.contentView addSubview:_dividerView];
-    [_window.contentView addSubview:_previewScrollView];
+    [_window.contentView addSubview:_previewWebView];
 
     // ── Status bar ───────────────────────────────────────
     _statusBar = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, cb.size.width, kStatusBarHeight)];
@@ -756,8 +741,8 @@ static const CGFloat kRulerWidth = 50.0;
 
 - (IBAction)toggleMarkdownPreview:(id)sender {
     if (_previewVisible) {
-        _previewScrollView.hidden = YES;
-        _dividerView.hidden       = YES;
+        _previewWebView.hidden = YES;
+        _dividerView.hidden    = YES;
         _scrollView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
         _scrollView.frame    = [self editorFrameForFullWidth];
         _previewMenuItem.title = @"Show Markdown Preview";
@@ -765,8 +750,8 @@ static const CGFloat kRulerWidth = 50.0;
     } else {
         _scrollView.autoresizingMask = NSViewHeightSizable;
         [self applyPreviewLayout];
-        _previewScrollView.hidden = NO;
-        _dividerView.hidden       = NO;
+        _previewWebView.hidden = NO;
+        _dividerView.hidden    = NO;
         _previewMenuItem.title = @"Hide Markdown Preview";
         _previewVisible = YES;
         [self updatePreview];
@@ -790,7 +775,7 @@ static const CGFloat kRulerWidth = 50.0;
 
     _scrollView.frame        = NSMakeRect(0, kStatusBarHeight, editorW, editH);
     _dividerView.frame       = NSMakeRect(editorW, kStatusBarHeight, kDividerWidth, editH);
-    _previewScrollView.frame = NSMakeRect(editorW + kDividerWidth, kStatusBarHeight, previewW, editH);
+    _previewWebView.frame = NSMakeRect(editorW + kDividerWidth, kStatusBarHeight, previewW, editH);
 
     _dividerView.layer.backgroundColor = [NSColor separatorColor].CGColor;
 }
@@ -809,44 +794,59 @@ static const CGFloat kRulerWidth = 50.0;
 
     NSString *body = [self markdownToHTML:_textView.string];
 
-    // Wrap in minimal HTML with system-font CSS so NSAttributedString renders nicely
     NSAppearanceName matched = [_window.effectiveAppearance
         bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]];
     BOOL dark = [matched isEqualToString:NSAppearanceNameDarkAqua];
-    NSString *fg   = dark ? @"#f5f5f7" : @"#1d1d1f";
-    NSString *bg   = dark ? @"#1c1c1e" : @"#ffffff";
-    NSString *codeBg = dark ? @"#2c2c2e" : @"#f5f5f7";
-    NSString *qFg  = dark ? @"#98989f" : @"#6c6c70";
+    NSString *fg            = dark ? @"#f0f0f0" : @"#1a1a1a";
+    NSString *bg            = dark ? @"#1c1c1e" : @"#ffffff";
+    NSString *inlineCodeBg  = dark ? @"#3d1a28" : @"#fce8f0";
+    NSString *inlineCodeFg  = dark ? @"#ff7faa" : @"#c0395b";
+    NSString *borderColor   = dark ? @"#444444" : @"#d0d0d0";
+    NSString *linkColor     = dark ? @"#ffa040" : @"#e07b00";
 
     NSString *html = [NSString stringWithFormat:
         @"<html><head><meta charset='utf-8'><style>"
         "body{font-family:-apple-system,sans-serif;font-size:15px;line-height:1.65;"
         "padding:20px 28px;color:%@;background:%@;}"
-        "h1,h2,h3,h4,h5,h6{font-weight:600;margin-top:1.2em;margin-bottom:.3em;}"
-        "h1{font-size:1.8em;}h2{font-size:1.4em;}h3{font-size:1.15em;}"
-        "p{margin:.7em 0;}"
-        "code{font-family:Menlo,Monaco,monospace;background:%@;padding:1px 5px;border-radius:3px;font-size:.88em;}"
-        "pre{background:%@;padding:12px 16px;border-radius:6px;margin:1em 0;}"
-        "pre code{background:none;padding:0;}"
-        "blockquote{border-left:3px solid #888;margin:1em 0;padding:2px 0 2px 14px;color:%@;}"
-        "a{color:#0066cc;}"
-        "ul,ol{margin:.7em 0;padding-left:1.6em;}li{margin:.2em 0;}"
-        "hr{border:none;border-top:1px solid #888;margin:1.2em 0;}"
+        "h1,h2,h3,h4,h5,h6{font-weight:700;margin-top:1.3em;margin-bottom:.2em;color:%@;}"
+        "h1{font-size:1.6em;}h2{font-size:1.25em;}h3{font-size:1.1em;}"
+        "p{margin:.5em 0;}"
+        "code{font-family:Menlo,Monaco,monospace;background:%@;color:%@;padding:1px 5px;font-size:.88em;border-radius:4px;}"
+        "a{color:%@;text-decoration:underline;}"
+        "hr{border:none;border-top:1px solid %@;margin:1.2em 0;}"
         "del{opacity:.6;}"
-        "</style></head><body>%@</body></html>",
-        fg, bg, codeBg, codeBg, qFg, body];
+        ".code-block{position:relative;border-radius:10px;margin:1em 0;overflow:hidden;}"
+        ".code-pre{margin:0;padding:14px 16px;font-family:Menlo,Monaco,monospace;font-size:.88em;overflow-x:auto;white-space:pre-wrap;word-break:break-all;}"
+        ".copy-btn{position:absolute;top:8px;right:8px;border:none;border-radius:6px;"
+        "padding:3px 10px;font-size:11px;cursor:pointer;background:rgba(128,128,128,0.25);"
+        "color:inherit;font-family:-apple-system,sans-serif;opacity:0;transition:opacity 0.15s;}"
+        ".code-block:hover .copy-btn{opacity:1;}"
+        ".copy-btn.copied{background:rgba(52,199,89,0.35);}"
+        "</style></head><body>%@"
+        "<script>"
+        "function copyCode(btn){"
+        "var pre=btn.parentElement.querySelector('pre');"
+        "window.webkit.messageHandlers.copyCode.postMessage(pre.textContent);"
+        "btn.textContent='Copied!';"
+        "btn.classList.add('copied');"
+        "setTimeout(function(){btn.textContent='Copy';btn.classList.remove('copied');},2000);}"
+        "</script>"
+        "</body></html>",
+        fg, bg, fg, inlineCodeBg, inlineCodeFg, linkColor, borderColor, body];
 
-    NSData *data = [html dataUsingEncoding:NSUTF8StringEncoding];
-    NSError *err = nil;
-    NSAttributedString *attrStr = [[NSAttributedString alloc]
-        initWithData:data
-             options:@{NSDocumentTypeDocumentAttribute: NSHTMLTextDocumentType,
-                       NSCharacterEncodingDocumentAttribute: @(NSUTF8StringEncoding)}
-  documentAttributes:nil
-               error:&err];
+    [_previewWebView loadHTMLString:html baseURL:nil];
+}
 
-    if (attrStr) {
-        [_previewTextView.textStorage setAttributedString:attrStr];
+// ── WKScriptMessageHandler ────────────────────────────────
+
+- (void)userContentController:(WKUserContentController *)userContentController
+      didReceiveScriptMessage:(WKScriptMessage *)message {
+    (void)userContentController;
+    if ([message.name isEqualToString:@"copyCode"] &&
+        [message.body isKindOfClass:[NSString class]]) {
+        NSPasteboard *pb = [NSPasteboard generalPasteboard];
+        [pb clearContents];
+        [pb setString:(NSString *)message.body forType:NSPasteboardTypeString];
     }
 }
 
@@ -913,13 +913,23 @@ static const CGFloat kRulerWidth = 50.0;
 }
 
 - (NSString *)markdownToHTML:(NSString *)rawMD {
+    NSAppearanceName matched = [_window.effectiveAppearance
+        bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]];
+    BOOL dark = [matched isEqualToString:NSAppearanceNameDarkAqua];
+    NSString *codeBg     = dark ? @"#2a2a2e" : @"#f2f2f2";
+    NSString *codeFg     = dark ? @"#e0e0e0" : @"#1a1a1a";
+    NSString *tableBdr   = dark ? @"#444444" : @"#d0d0d0";
+    NSString *borderColor= dark ? @"#555555" : @"#d0d0d0";
+    NSString *checkColor = dark ? @"#ffa040" : @"#e07b00";
+
     NSMutableString *out = [NSMutableString string];
     NSArray<NSString *> *lines = [rawMD componentsSeparatedByString:@"\n"];
     NSUInteger n = lines.count;
 
-    __block BOOL inFence = NO;
-    __block BOOL inUL    = NO;
-    __block BOOL inOL    = NO;
+    __block BOOL inFence  = NO;
+    __block BOOL inUL     = NO;
+    __block BOOL inOL     = NO;
+    __block NSUInteger olCounter = 0;
     __block NSMutableString *para = [NSMutableString string];
 
     void (^flushPara)(void) = ^{
@@ -928,8 +938,8 @@ static const CGFloat kRulerWidth = 50.0;
         [para setString:@""];
     };
     void (^closeLists)(void) = ^{
-        if (inUL) { [out appendString:@"</ul>\n"]; inUL = NO; }
-        if (inOL) { [out appendString:@"</ol>\n"]; inOL = NO; }
+        if (inUL) { inUL = NO; }
+        if (inOL) { inOL = NO; olCounter = 0; }
     };
 
     for (NSUInteger i = 0; i < n; i++) {
@@ -938,7 +948,7 @@ static const CGFloat kRulerWidth = 50.0;
         // Fenced code block body
         if (inFence) {
             if ([line hasPrefix:@"```"] || [line hasPrefix:@"~~~"]) {
-                [out appendString:@"</code></pre>\n"];
+                [out appendString:@"</pre></div>\n"];
                 inFence = NO;
             } else {
                 [out appendString:[self htmlEscape:line]];
@@ -950,13 +960,11 @@ static const CGFloat kRulerWidth = 50.0;
         // Fenced code block start
         if ([line hasPrefix:@"```"] || [line hasPrefix:@"~~~"]) {
             flushPara(); closeLists();
-            NSString *lang = [[line substringFromIndex:3]
-                stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-            if (lang.length)
-                [out appendFormat:@"<pre><code class=\"language-%@\">",
-                    [self htmlEscape:lang]];
-            else
-                [out appendString:@"<pre><code>"];
+            [out appendFormat:
+                @"<div class='code-block' style='background:%@;'>"
+                "<button class='copy-btn' onclick='copyCode(this)'>Copy</button>"
+                "<pre class='code-pre' style='color:%@;'>",
+                codeBg, codeFg];
             inFence = YES;
             continue;
         }
@@ -1028,8 +1036,83 @@ static const CGFloat kRulerWidth = 50.0;
         // Blockquote
         if ([line hasPrefix:@"> "]) {
             flushPara(); closeLists();
-            [out appendFormat:@"<blockquote><p>%@</p></blockquote>\n",
+            [out appendFormat:
+                @"<table width='100%%' cellpadding='0' cellspacing='0' border='0'"
+                " style='margin:.6em 0;'><tr>"
+                "<td bgcolor='%@' style='width:3px;'>&nbsp;&nbsp;</td>"
+                "<td style='padding:2px 0 2px 12px;'>%@</td>"
+                "</tr></table>\n",
+                borderColor,
                 [self applyInlineMarkdown:[line substringFromIndex:2]]];
+            continue;
+        }
+
+        // GFM table: header row starts with '|'
+        if ([trimmed hasPrefix:@"|"] && i + 1 < n) {
+            NSString *nextTrimmed = [[lines[i + 1] stringByTrimmingCharactersInSet:
+                                      [NSCharacterSet whitespaceCharacterSet]]
+                                     stringByReplacingOccurrencesOfString:@" " withString:@""];
+            // Separator row must be all dashes/pipes/colons
+            BOOL isSep = nextTrimmed.length > 0;
+            for (NSUInteger k = 0; k < nextTrimmed.length && isSep; k++) {
+                unichar c = [nextTrimmed characterAtIndex:k];
+                if (c != '|' && c != '-' && c != ':') isSep = NO;
+            }
+            if (isSep) {
+                flushPara(); closeLists();
+                // Parse header cells
+                NSArray<NSString *> *hCells = [trimmed componentsSeparatedByString:@"|"];
+                [out appendFormat:
+                    @"<table cellpadding='6' cellspacing='0' border='1'"
+                    " bordercolor='%@' style='border-collapse:collapse;margin:1em 0;'>",
+                    tableBdr];
+                [out appendString:@"<tr>"];
+                for (NSString *cell in hCells) {
+                    NSString *ct = [cell stringByTrimmingCharactersInSet:
+                                    [NSCharacterSet whitespaceCharacterSet]];
+                    if (!ct.length) continue;
+                    [out appendFormat:@"<th style='padding:6px 12px;"
+                        "text-align:left;border:1px solid %@;font-weight:600;'>%@</th>",
+                        tableBdr, [self applyInlineMarkdown:ct]];
+                }
+                [out appendString:@"</tr>\n"];
+                i += 2; // skip header + separator
+                // Data rows
+                while (i < n) {
+                    NSString *row = [lines[i] stringByTrimmingCharactersInSet:
+                                     [NSCharacterSet whitespaceCharacterSet]];
+                    if (!row.length || ![row hasPrefix:@"|"]) break;
+                    NSArray<NSString *> *cells = [row componentsSeparatedByString:@"|"];
+                    [out appendString:@"<tr>"];
+                    for (NSString *cell in cells) {
+                        NSString *ct = [cell stringByTrimmingCharactersInSet:
+                                        [NSCharacterSet whitespaceCharacterSet]];
+                        if (!ct.length) continue;
+                        [out appendFormat:@"<td style='padding:6px 12px;"
+                            "border:1px solid %@;'>%@</td>",
+                            tableBdr, [self applyInlineMarkdown:ct]];
+                    }
+                    [out appendString:@"</tr>\n"];
+                    i++;
+                }
+                [out appendString:@"</table>\n"];
+                i--; // outer loop will i++
+                continue;
+            }
+        }
+
+        // GFM task list item: - [ ] or - [x]
+        if (line.length >= 6 &&
+            ([line hasPrefix:@"- [ ] "] || [line hasPrefix:@"- [x] "] || [line hasPrefix:@"- [X] "])) {
+            flushPara();
+            if (inOL) { inOL = NO; olCounter = 0; }
+            inUL = YES;
+            BOOL checked = ![line hasPrefix:@"- [ ] "];
+            NSString *bullet = checked
+                ? [NSString stringWithFormat:@"<font color='%@'>&#x25cf;</font>", checkColor]
+                : @"<font color='#999999'>&#x25cb;</font>";
+            [out appendFormat:@"<p style='margin:0 0 .3em 4px;'>%@&nbsp;%@</p>\n",
+                bullet, [self applyInlineMarkdown:[line substringFromIndex:6]]];
             continue;
         }
 
@@ -1037,9 +1120,9 @@ static const CGFloat kRulerWidth = 50.0;
         if (line.length >= 2 &&
             ([line hasPrefix:@"- "] || [line hasPrefix:@"* "] || [line hasPrefix:@"+ "])) {
             flushPara();
-            if (inOL) { [out appendString:@"</ol>\n"]; inOL = NO; }
-            if (!inUL) { [out appendString:@"<ul>\n"]; inUL = YES; }
-            [out appendFormat:@"<li>%@</li>\n",
+            if (inOL) { inOL = NO; olCounter = 0; }
+            inUL = YES;
+            [out appendFormat:@"<p style='margin:0 0 .15em 20px;'>&#x2013;&nbsp;%@</p>\n",
                 [self applyInlineMarkdown:[line substringFromIndex:2]]];
             continue;
         }
@@ -1056,9 +1139,11 @@ static const CGFloat kRulerWidth = 50.0;
                 }
                 if (allDigits) {
                     flushPara();
-                    if (inUL) { [out appendString:@"</ul>\n"]; inUL = NO; }
-                    if (!inOL) { [out appendString:@"<ol>\n"]; inOL = YES; }
-                    [out appendFormat:@"<li>%@</li>\n",
+                    if (inUL) { inUL = NO; }
+                    if (!inOL) { inOL = YES; olCounter = 0; }
+                    olCounter++;
+                    [out appendFormat:@"<p style='margin:0 0 .15em 20px;'>%lu.&nbsp;%@</p>\n",
+                        (unsigned long)olCounter,
                         [self applyInlineMarkdown:[line substringFromIndex:dot.location + 2]]];
                     continue;
                 }
@@ -1072,8 +1157,6 @@ static const CGFloat kRulerWidth = 50.0;
     }
 
     flushPara();
-    if (inUL) [out appendString:@"</ul>\n"];
-    if (inOL) [out appendString:@"</ol>\n"];
     if (inFence) [out appendString:@"</code></pre>\n"];
 
     return [out copy];
