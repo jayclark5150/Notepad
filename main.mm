@@ -1,11 +1,12 @@
 // ============================================================
 //  Notepad — a minimal plain-text editor for macOS (arm64)
 //  Build:  make   (see Makefile)
-//  Deps:   Cocoa (system), clang++ / Apple LLVM
+//  Deps:   Cocoa, WebKit (system), clang++ / Apple LLVM
 // ============================================================
 
 #import <Cocoa/Cocoa.h>
 #import <Foundation/Foundation.h>
+#import <WebKit/WebKit.h>
 
 // ============================================================
 // MARK: - Line Number Ruler View
@@ -25,7 +26,6 @@ static const CGFloat kRulerWidth = 50.0;
         _clientTextView = tv;
         self.clientView  = tv;
         self.ruleThickness = kRulerWidth;
-        // Redraw whenever text changes
         [[NSNotificationCenter defaultCenter]
             addObserver:self
                selector:@selector(textDidChange:)
@@ -52,11 +52,9 @@ static const CGFloat kRulerWidth = 50.0;
     NSString        *str = tv.string;
     NSUInteger       len = str.length;
 
-    // Background
     [[NSColor colorWithWhite:0.95 alpha:1.0] setFill];
     NSRectFill(self.bounds);
 
-    // Separator line
     [[NSColor colorWithWhite:0.75 alpha:1.0] setStroke];
     [NSBezierPath strokeLineFromPoint:NSMakePoint(kRulerWidth - 0.5, 0)
                               toPoint:NSMakePoint(kRulerWidth - 0.5, self.bounds.size.height)];
@@ -76,7 +74,6 @@ static const CGFloat kRulerWidth = 50.0;
         NSRect  lineRect = [lm lineFragmentRectForGlyphAtIndex:glyphIdx
                                                  effectiveRange:&lineGlyphRange];
 
-        // Translate from text-view coords to ruler coords
         CGFloat yInRuler = lineRect.origin.y + containerOrigin.y
                          - self.scrollView.documentVisibleRect.origin.y;
 
@@ -91,7 +88,6 @@ static const CGFloat kRulerWidth = 50.0;
             [label drawInRect:labRect withAttributes:attrs];
         }
 
-        // Advance: find next line by scanning \n in char range
         NSRange charRange = [lm characterRangeForGlyphRange:lineGlyphRange
                                            actualGlyphRange:nil];
         NSUInteger nextCharIdx = NSMaxRange(charRange);
@@ -99,27 +95,22 @@ static const CGFloat kRulerWidth = 50.0;
         if (nextCharIdx < len) {
             unichar ch = [str characterAtIndex:nextCharIdx - 1];
             if (ch == '\n') lineNumber++;
-        } else {
-            // Last line
         }
 
         glyphIdx = NSMaxRange(lineGlyphRange);
 
-        // Count newlines we skipped (wrapped lines don't increment)
         if (glyphIdx < lm.numberOfGlyphs) {
             NSRange nextCharRange = [lm characterRangeForGlyphRange:
                                         NSMakeRange(glyphIdx, 1)
                                                actualGlyphRange:nil];
-            NSUInteger prevEnd = NSMaxRange(charRange);
+            NSUInteger prevEnd   = NSMaxRange(charRange);
             NSUInteger nextStart = nextCharRange.location;
-            // count newlines between prevEnd and nextStart
             for (NSUInteger i = prevEnd; i < nextStart && i < len; i++) {
                 if ([str characterAtIndex:i] == '\n') lineNumber++;
             }
         }
     }
 
-    // Handle empty document: draw line 1
     if (len == 0) {
         NSString *label   = @"1";
         NSSize    labSize = [label sizeWithAttributes:attrs];
@@ -173,22 +164,18 @@ static const CGFloat kRulerWidth = 50.0;
 
     NSView *content = _panel.contentView;
 
-    // Labels
     NSTextField *findLabel    = [self labelWithString:@"Find:"    frame:NSMakeRect(12, 96, 70, 20)];
     NSTextField *replaceLabel = [self labelWithString:@"Replace:" frame:NSMakeRect(12, 64, 70, 20)];
     [content addSubview:findLabel];
     [content addSubview:replaceLabel];
 
-    // Find field
     _findField = [[NSTextField alloc] initWithFrame:NSMakeRect(88, 93, 316, 24)];
     _findField.delegate = self;
     [content addSubview:_findField];
 
-    // Replace field
     _replaceField = [[NSTextField alloc] initWithFrame:NSMakeRect(88, 61, 316, 24)];
     [content addSubview:_replaceField];
 
-    // Buttons
     NSButton *btnFind    = [self buttonWithTitle:@"Find Next"   action:@selector(findNext:)   frame:NSMakeRect(12,  16, 100, 32)];
     NSButton *btnReplace = [self buttonWithTitle:@"Replace"     action:@selector(replaceOne:)  frame:NSMakeRect(120, 16, 100, 32)];
     NSButton *btnAll     = [self buttonWithTitle:@"Replace All" action:@selector(replaceAll:)  frame:NSMakeRect(228, 16, 108, 32)];
@@ -226,7 +213,6 @@ static const CGFloat kRulerWidth = 50.0;
 }
 
 - (void)controlTextDidChange:(NSNotification *)note {
-    // Reset search position when find text changes
     _lastFoundLocation = 0;
 }
 
@@ -237,7 +223,6 @@ static const CGFloat kRulerWidth = 50.0;
     NSString *haystack = _targetTextView.string;
     NSUInteger searchFrom = _lastFoundLocation;
 
-    // If we had a previous selection that matches, advance past it
     NSRange sel = _targetTextView.selectedRange;
     if (sel.length > 0 && sel.location == _lastFoundLocation)
         searchFrom = NSMaxRange(sel);
@@ -247,7 +232,6 @@ static const CGFloat kRulerWidth = 50.0;
                                       range:NSMakeRange(searchFrom, haystack.length - searchFrom)];
 
     if (found.location == NSNotFound && searchFrom > 0) {
-        // Wrap around
         found = [haystack rangeOfString:needle
                                 options:NSCaseInsensitiveSearch
                                   range:NSMakeRange(0, haystack.length)];
@@ -307,7 +291,8 @@ static const CGFloat kRulerWidth = 50.0;
 // MARK: - Application Delegate / Main Editor Window
 // ============================================================
 
-@interface AppDelegate : NSObject <NSApplicationDelegate, NSTextViewDelegate, NSWindowDelegate>
+@interface AppDelegate : NSObject <NSApplicationDelegate, NSTextViewDelegate,
+                                   NSWindowDelegate, NSSplitViewDelegate>
 @property (nonatomic, strong) NSWindow              *window;
 @property (nonatomic, strong) NSTextView            *textView;
 @property (nonatomic, strong) NSScrollView          *scrollView;
@@ -317,9 +302,16 @@ static const CGFloat kRulerWidth = 50.0;
 @property (nonatomic, assign) BOOL                   isDirty;
 // Font state
 @property (nonatomic, assign) CGFloat                currentFontSize;
-@property (nonatomic, copy)   NSString              *fontFamily;  // @"mono", @"sans", @"serif"
+@property (nonatomic, copy)   NSString              *fontFamily;
 @property (nonatomic, assign) CGFloat                currentLineSpacing;
 @property (nonatomic, strong) NSTextField           *statusBar;
+// Markdown preview
+@property (nonatomic, strong) NSSplitView           *splitView;
+@property (nonatomic, strong) WKWebView             *previewView;
+@property (nonatomic, strong) NSTimer               *previewTimer;
+@property (nonatomic, strong) NSMenuItem            *previewMenuItem;
+// Syntax highlighting guard
+@property (nonatomic, assign) BOOL                   isHighlighting;
 @end
 
 @implementation AppDelegate
@@ -359,7 +351,7 @@ static const CGFloat kRulerWidth = 50.0;
 // ── Window & Views ────────────────────────────────────────
 
 - (void)buildWindow {
-    NSRect frame = NSMakeRect(0, 0, 900, 700);
+    NSRect frame = NSMakeRect(0, 0, 1100, 700);
     _window = [[NSWindow alloc] initWithContentRect:frame
                                           styleMask:NSWindowStyleMaskTitled
                                                    | NSWindowStyleMaskResizable
@@ -371,18 +363,24 @@ static const CGFloat kRulerWidth = 50.0;
     _window.delegate = self;
     [_window center];
 
-    // Scroll view — leave 22 pt at the bottom for the status bar
     static const CGFloat kStatusBarHeight = 22.0;
     NSRect cb = _window.contentView.bounds;
-    _scrollView = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, kStatusBarHeight,
-                                                                  cb.size.width,
-                                                                  cb.size.height - kStatusBarHeight)];
-    _scrollView.autoresizingMask      = NSViewWidthSizable | NSViewHeightSizable;
+
+    // Split view replaces the scroll view as the primary layout container
+    _splitView = [[NSSplitView alloc] initWithFrame:
+                    NSMakeRect(0, kStatusBarHeight, cb.size.width, cb.size.height - kStatusBarHeight)];
+    _splitView.vertical          = YES;
+    _splitView.dividerStyle      = NSSplitViewDividerStyleThin;
+    _splitView.autoresizingMask  = NSViewWidthSizable | NSViewHeightSizable;
+    _splitView.delegate          = self;
+
+    // ── Editor pane ──────────────────────────────────────
+    _scrollView = [[NSScrollView alloc] initWithFrame:
+                    NSMakeRect(0, 0, _splitView.frame.size.width, _splitView.frame.size.height)];
     _scrollView.hasVerticalScroller   = YES;
     _scrollView.hasHorizontalScroller = NO;
     _scrollView.autohidesScrollers    = YES;
 
-    // Text view
     NSSize contentSize = _scrollView.contentSize;
     NSTextContainer *tc = [[NSTextContainer alloc] initWithSize:
                              NSMakeSize(contentSize.width, CGFLOAT_MAX)];
@@ -393,7 +391,8 @@ static const CGFloat kRulerWidth = 50.0;
     [ts addLayoutManager:lm];
     [lm addTextContainer:tc];
 
-    _textView = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, contentSize.width, contentSize.height)
+    _textView = [[NSTextView alloc] initWithFrame:
+                    NSMakeRect(0, 0, contentSize.width, contentSize.height)
                                     textContainer:tc];
     _textView.autoresizingMask             = NSViewWidthSizable;
     _textView.minSize                      = NSMakeSize(0, contentSize.height);
@@ -413,21 +412,33 @@ static const CGFloat kRulerWidth = 50.0;
 
     _scrollView.documentView = _textView;
 
-    // Line number ruler
     _rulerView = [[LineNumberRulerView alloc] initWithScrollView:_scrollView
                                                   clientTextView:_textView];
     _scrollView.verticalRulerView  = _rulerView;
     _scrollView.rulersVisible      = YES;
 
-    [_window.contentView addSubview:_scrollView];
+    // ── Preview pane ─────────────────────────────────────
+    WKWebViewConfiguration *wkConfig = [[WKWebViewConfiguration alloc] init];
+    _previewView = [[WKWebView alloc]
+        initWithFrame:NSMakeRect(0, 0, 0, _splitView.frame.size.height)
+        configuration:wkConfig];
 
-    // Status bar
+    [_splitView addSubview:_scrollView];
+    [_splitView addSubview:_previewView];
+
+    // Collapse the preview pane initially
+    [_splitView setPosition:_splitView.frame.size.width ofDividerAtIndex:0];
+
+    [_window.contentView addSubview:_splitView];
+
+    // ── Status bar ───────────────────────────────────────
     _statusBar = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, cb.size.width, kStatusBarHeight)];
     _statusBar.editable         = NO;
     _statusBar.bordered         = NO;
     _statusBar.drawsBackground  = YES;
     _statusBar.backgroundColor  = [NSColor controlBackgroundColor];
-    _statusBar.font             = [NSFont monospacedDigitSystemFontOfSize:11.0 weight:NSFontWeightRegular];
+    _statusBar.font             = [NSFont monospacedDigitSystemFontOfSize:11.0
+                                                                   weight:NSFontWeightRegular];
     _statusBar.textColor        = [NSColor secondaryLabelColor];
     _statusBar.alignment        = NSTextAlignmentCenter;
     _statusBar.autoresizingMask = NSViewWidthSizable;
@@ -439,10 +450,8 @@ static const CGFloat kRulerWidth = 50.0;
     separator.autoresizingMask = NSViewWidthSizable;
     [_window.contentView addSubview:separator];
 
-    // Apply initial font / typing attributes
     [self applyFont];
 
-    // Find & Replace controller
     _findReplace = [[FindReplaceController alloc] initWithTargetTextView:_textView];
 
     [self updateStatusBar];
@@ -457,7 +466,9 @@ static const CGFloat kRulerWidth = 50.0;
     // App menu
     NSMenuItem *appItem = [main addItemWithTitle:@"" action:nil keyEquivalent:@""];
     NSMenu *appMenu = [[NSMenu alloc] init];
-    [appMenu addItemWithTitle:@"About Notepad" action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""];
+    [appMenu addItemWithTitle:@"About Notepad"
+                       action:@selector(orderFrontStandardAboutPanel:)
+                keyEquivalent:@""];
     [appMenu addItem:[NSMenuItem separatorItem]];
     [appMenu addItemWithTitle:@"Quit Notepad" action:@selector(terminate:) keyEquivalent:@"q"];
     appItem.submenu = appMenu;
@@ -465,23 +476,25 @@ static const CGFloat kRulerWidth = 50.0;
     // File menu
     NSMenuItem *fileItem = [main addItemWithTitle:@"File" action:nil keyEquivalent:@""];
     NSMenu *fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
-    [fileMenu addItemWithTitle:@"New"     action:@selector(newDocument:)    keyEquivalent:@"n"];
-    [fileMenu addItemWithTitle:@"Open…"   action:@selector(openDocument:)   keyEquivalent:@"o"];
+    [fileMenu addItemWithTitle:@"New"   action:@selector(newDocument:)  keyEquivalent:@"n"];
+    [fileMenu addItemWithTitle:@"Open…" action:@selector(openDocument:) keyEquivalent:@"o"];
     [fileMenu addItem:[NSMenuItem separatorItem]];
-    [fileMenu addItemWithTitle:@"Save"    action:@selector(saveDocument:)   keyEquivalent:@"s"];
-    NSMenuItem *saveAs = [fileMenu addItemWithTitle:@"Save As…" action:@selector(saveDocumentAs:) keyEquivalent:@"s"];
+    [fileMenu addItemWithTitle:@"Save"  action:@selector(saveDocument:) keyEquivalent:@"s"];
+    NSMenuItem *saveAs = [fileMenu addItemWithTitle:@"Save As…"
+                                             action:@selector(saveDocumentAs:)
+                                      keyEquivalent:@"s"];
     saveAs.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
     fileItem.submenu = fileMenu;
 
     // Edit menu
     NSMenuItem *editItem = [main addItemWithTitle:@"Edit" action:nil keyEquivalent:@""];
     NSMenu *editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
-    [editMenu addItemWithTitle:@"Undo"  action:@selector(undo:)  keyEquivalent:@"z"];
-    [editMenu addItemWithTitle:@"Redo"  action:@selector(redo:)  keyEquivalent:@"Z"];
+    [editMenu addItemWithTitle:@"Undo"       action:@selector(undo:)      keyEquivalent:@"z"];
+    [editMenu addItemWithTitle:@"Redo"       action:@selector(redo:)      keyEquivalent:@"Z"];
     [editMenu addItem:[NSMenuItem separatorItem]];
-    [editMenu addItemWithTitle:@"Cut"   action:@selector(cut:)   keyEquivalent:@"x"];
-    [editMenu addItemWithTitle:@"Copy"  action:@selector(copy:)  keyEquivalent:@"c"];
-    [editMenu addItemWithTitle:@"Paste" action:@selector(paste:) keyEquivalent:@"v"];
+    [editMenu addItemWithTitle:@"Cut"        action:@selector(cut:)       keyEquivalent:@"x"];
+    [editMenu addItemWithTitle:@"Copy"       action:@selector(copy:)      keyEquivalent:@"c"];
+    [editMenu addItemWithTitle:@"Paste"      action:@selector(paste:)     keyEquivalent:@"v"];
     [editMenu addItemWithTitle:@"Select All" action:@selector(selectAll:) keyEquivalent:@"a"];
     [editMenu addItem:[NSMenuItem separatorItem]];
     NSMenuItem *findItem = [editMenu addItemWithTitle:@"Find & Replace…"
@@ -494,20 +507,28 @@ static const CGFloat kRulerWidth = 50.0;
     NSMenuItem *formatItem = [main addItemWithTitle:@"Format" action:nil keyEquivalent:@""];
     NSMenu *formatMenu = [[NSMenu alloc] initWithTitle:@"Format"];
 
-    // -- Font family submenu
     NSMenuItem *familyItem = [formatMenu addItemWithTitle:@"Font" action:nil keyEquivalent:@""];
     NSMenu *familyMenu = [[NSMenu alloc] initWithTitle:@"Font"];
-    NSMenuItem *monoItem  = [familyMenu addItemWithTitle:@"Monospaced"  action:@selector(setFontMono:)  keyEquivalent:@""];
-    NSMenuItem *sansItem  = [familyMenu addItemWithTitle:@"Sans-Serif"  action:@selector(setFontSans:)  keyEquivalent:@""];
-    NSMenuItem *serifItem = [familyMenu addItemWithTitle:@"Serif"       action:@selector(setFontSerif:) keyEquivalent:@""];
+    NSMenuItem *monoItem  = [familyMenu addItemWithTitle:@"Monospaced"
+                                                  action:@selector(setFontMono:)
+                                           keyEquivalent:@""];
+    NSMenuItem *sansItem  = [familyMenu addItemWithTitle:@"Sans-Serif"
+                                                  action:@selector(setFontSans:)
+                                           keyEquivalent:@""];
+    NSMenuItem *serifItem = [familyMenu addItemWithTitle:@"Serif"
+                                                  action:@selector(setFontSerif:)
+                                           keyEquivalent:@""];
     for (NSMenuItem *it in @[monoItem, sansItem, serifItem]) it.target = self;
     familyItem.submenu = familyMenu;
 
-    // -- Size submenu
     NSMenuItem *sizeItem = [formatMenu addItemWithTitle:@"Size" action:nil keyEquivalent:@""];
     NSMenu *sizeMenu = [[NSMenu alloc] initWithTitle:@"Size"];
-    NSMenuItem *biggerItem  = [sizeMenu addItemWithTitle:@"Bigger"   action:@selector(fontSizeUp:)   keyEquivalent:@"+"];
-    NSMenuItem *smallerItem = [sizeMenu addItemWithTitle:@"Smaller"  action:@selector(fontSizeDown:) keyEquivalent:@"-"];
+    NSMenuItem *biggerItem  = [sizeMenu addItemWithTitle:@"Bigger"
+                                                  action:@selector(fontSizeUp:)
+                                           keyEquivalent:@"+"];
+    NSMenuItem *smallerItem = [sizeMenu addItemWithTitle:@"Smaller"
+                                                  action:@selector(fontSizeDown:)
+                                           keyEquivalent:@"-"];
     biggerItem.target  = self;
     smallerItem.target = self;
     [sizeMenu addItem:[NSMenuItem separatorItem]];
@@ -520,17 +541,23 @@ static const CGFloat kRulerWidth = 50.0;
     }
     sizeItem.submenu = sizeMenu;
 
-    // -- Line spacing submenu
     [formatMenu addItem:[NSMenuItem separatorItem]];
-    NSMenuItem *spacingItem = [formatMenu addItemWithTitle:@"Line Spacing" action:nil keyEquivalent:@""];
+    NSMenuItem *spacingItem = [formatMenu addItemWithTitle:@"Line Spacing"
+                                                    action:nil
+                                             keyEquivalent:@""];
     NSMenu *spacingMenu = [[NSMenu alloc] initWithTitle:@"Line Spacing"];
-    NSDictionary *spacings = @{@"Tight (1.0)": @0.0, @"Normal (1.2)": @3.0, @"Relaxed (1.5)": @7.0, @"Double (2.0)": @14.0};
-    NSArray *spacingOrder  = @[@"Tight (1.0)", @"Normal (1.2)", @"Relaxed (1.5)", @"Double (2.0)"];
+    NSDictionary *spacings = @{
+        @"Tight (1.0)":   @0.0,
+        @"Normal (1.2)":  @3.0,
+        @"Relaxed (1.5)": @7.0,
+        @"Double (2.0)":  @14.0
+    };
+    NSArray *spacingOrder = @[@"Tight (1.0)", @"Normal (1.2)", @"Relaxed (1.5)", @"Double (2.0)"];
     for (NSString *label in spacingOrder) {
         NSMenuItem *it = [spacingMenu addItemWithTitle:label
                                                action:@selector(setLineSpacing:)
                                         keyEquivalent:@""];
-        it.tag    = (NSInteger)([spacings[label] doubleValue] * 10);  // encode as tenths
+        it.tag    = (NSInteger)([spacings[label] doubleValue] * 10);
         it.target = self;
     }
     spacingItem.submenu = spacingMenu;
@@ -540,11 +567,21 @@ static const CGFloat kRulerWidth = 50.0;
     // View menu
     NSMenuItem *viewItem = [main addItemWithTitle:@"View" action:nil keyEquivalent:@""];
     NSMenu *viewMenu = [[NSMenu alloc] initWithTitle:@"View"];
+
     NSMenuItem *lineNumItem = [viewMenu addItemWithTitle:@"Toggle Line Numbers"
                                                   action:@selector(toggleLineNumbers:)
                                            keyEquivalent:@"l"];
     lineNumItem.target = self;
     lineNumItem.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+
+    [viewMenu addItem:[NSMenuItem separatorItem]];
+
+    _previewMenuItem = [viewMenu addItemWithTitle:@"Show Markdown Preview"
+                                           action:@selector(toggleMarkdownPreview:)
+                                    keyEquivalent:@"p"];
+    _previewMenuItem.target = self;
+    _previewMenuItem.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+
     viewItem.submenu = viewMenu;
 
     (void)findItem;
@@ -559,6 +596,10 @@ static const CGFloat kRulerWidth = 50.0;
     }
     [_rulerView setNeedsDisplay:YES];
     [self updateStatusBar];
+    if (!_isHighlighting) {
+        [self applyMarkdownHighlighting];
+    }
+    [self schedulePreviewUpdate];
 }
 
 - (void)textViewDidChangeSelection:(NSNotification *)note {
@@ -579,8 +620,9 @@ static const CGFloat kRulerWidth = 50.0;
 }
 
 - (BOOL)loadFileAtPath:(NSString *)path {
-    static const long long kMaxFileSize = 100LL * 1024 * 1024; // 100 MB
-    NSNumber *fileSize = [[NSFileManager defaultManager] attributesOfItemAtPath:path error:nil][NSFileSize];
+    static const long long kMaxFileSize = 100LL * 1024 * 1024;
+    NSNumber *fileSize = [[NSFileManager defaultManager]
+        attributesOfItemAtPath:path error:nil][NSFileSize];
     if (fileSize && fileSize.longLongValue > kMaxFileSize) {
         NSAlert *sizeAlert = [[NSAlert alloc] init];
         sizeAlert.messageText = @"File Too Large";
@@ -597,13 +639,14 @@ static const CGFloat kRulerWidth = 50.0;
                                                encoding:NSUTF8StringEncoding
                                                   error:&err];
     if (err) {
-        text = nil; err = nil; // Release before Latin-1 allocation
+        text = nil; err = nil;
         text = [NSString stringWithContentsOfFile:path
                                          encoding:NSISOLatin1StringEncoding
                                             error:&err];
     }
     if (err || !text) {
-        [self showError:[NSString stringWithFormat:@"Could not open file:\n%@", err.localizedDescription]];
+        [self showError:[NSString stringWithFormat:@"Could not open file:\n%@",
+            err.localizedDescription]];
         return NO;
     }
 
@@ -614,6 +657,8 @@ static const CGFloat kRulerWidth = 50.0;
     _isDirty = NO;
     [self updateTitle];
     [self updateStatusBar];
+    [self applyMarkdownHighlighting];
+    [self schedulePreviewUpdate];
     return YES;
 }
 
@@ -623,7 +668,7 @@ static const CGFloat kRulerWidth = 50.0;
     NSOpenPanel *panel = [NSOpenPanel openPanel];
     panel.allowsMultipleSelection = NO;
     panel.canChooseDirectories    = NO;
-    panel.allowedContentTypes     = @[];   // Any file
+    panel.allowedContentTypes     = @[];
 
     if ([panel runModal] != NSModalResponseOK) return;
     [self loadFileAtPath:panel.URL.path];
@@ -667,8 +712,7 @@ static const CGFloat kRulerWidth = 50.0;
                                    encoding:NSUTF8StringEncoding
                                       error:&err];
     if (!ok) {
-        // Atomic write creates a temp file in the parent directory; retry without
-        // atomicity if the sandbox denied parent-directory access.
+        // Retry without atomicity if sandbox denied parent-directory access
         err = nil;
         ok = [_textView.string writeToFile:path
                                 atomically:NO
@@ -692,6 +736,455 @@ static const CGFloat kRulerWidth = 50.0;
     [_findReplace showPanel];
 }
 
+// ── Markdown Preview ──────────────────────────────────────
+
+- (IBAction)toggleMarkdownPreview:(id)sender {
+    BOOL isCollapsed = [_splitView isSubviewCollapsed:_previewView];
+    if (isCollapsed) {
+        CGFloat total = _splitView.frame.size.width;
+        [_splitView setPosition:total * 0.55 ofDividerAtIndex:0];
+        _previewMenuItem.title = @"Hide Markdown Preview";
+        [self updatePreview];
+    } else {
+        [_splitView setPosition:_splitView.frame.size.width ofDividerAtIndex:0];
+        _previewMenuItem.title = @"Show Markdown Preview";
+    }
+}
+
+- (void)schedulePreviewUpdate {
+    [_previewTimer invalidate];
+    _previewTimer = [NSTimer scheduledTimerWithTimeInterval:0.4
+                                                     target:self
+                                                   selector:@selector(updatePreview)
+                                                   userInfo:nil
+                                                    repeats:NO];
+}
+
+- (void)updatePreview {
+    if ([_splitView isSubviewCollapsed:_previewView]) return;
+
+    static NSString *kHTMLTemplate = nil;
+    if (!kHTMLTemplate) {
+        kHTMLTemplate =
+            @"<!DOCTYPE html><html><head><meta charset='utf-8'><style>"
+            "body{font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;"
+            "font-size:15px;line-height:1.65;padding:24px 36px;max-width:820px;"
+            "margin:0 auto;color:#1d1d1f;background:#fff;}"
+            "@media(prefers-color-scheme:dark){"
+            "body{color:#f5f5f7;background:#1c1c1e;}"
+            "code,pre{background:#2c2c2e;}"
+            "blockquote{border-color:#48484a;color:#98989f;}"
+            "a{color:#2997ff;}"
+            "hr{border-color:#3a3a3c;}"
+            "th,td{border-color:#3a3a3c;}"
+            "th{background:#2c2c2e;}"
+            "}"
+            "h1,h2,h3,h4,h5,h6{font-weight:600;margin-top:1.4em;margin-bottom:.4em;line-height:1.2;}"
+            "h1{font-size:2em;}h2{font-size:1.5em;}h3{font-size:1.25em;}"
+            "p{margin:.8em 0;}"
+            "code{font-family:'SF Mono',Menlo,Monaco,monospace;"
+            "background:#f5f5f7;padding:2px 6px;border-radius:4px;font-size:.88em;}"
+            "pre{background:#f5f5f7;padding:14px 18px;border-radius:8px;overflow-x:auto;margin:1em 0;}"
+            "pre code{background:none;padding:0;font-size:.9em;}"
+            "blockquote{border-left:4px solid #d1d1d6;margin:1em 0;padding:4px 0 4px 16px;color:#6c6c70;}"
+            "blockquote p{margin:.3em 0;}"
+            "a{color:#0066cc;text-decoration:none;}a:hover{text-decoration:underline;}"
+            "hr{border:none;border-top:1px solid #d1d1d6;margin:1.5em 0;}"
+            "ul,ol{margin:.8em 0;padding-left:1.8em;}li{margin:.3em 0;}"
+            "table{border-collapse:collapse;width:100%;margin:1em 0;}"
+            "th,td{border:1px solid #d1d1d6;padding:8px 12px;text-align:left;}"
+            "th{background:#f5f5f7;font-weight:600;}"
+            "img{max-width:100%;height:auto;border-radius:4px;}"
+            "del{color:#98989f;}"
+            "</style></head><body>%@</body></html>";
+    }
+
+    NSString *page = [NSString stringWithFormat:kHTMLTemplate,
+                      [self markdownToHTML:_textView.string]];
+    [_previewView loadHTMLString:page baseURL:nil];
+}
+
+// ── NSSplitViewDelegate ───────────────────────────────────
+
+- (BOOL)splitView:(NSSplitView *)sv canCollapseSubview:(NSView *)subview {
+    (void)sv;
+    return subview == _previewView;
+}
+
+- (CGFloat)splitView:(NSSplitView *)sv constrainMinCoordinate:(CGFloat)minPos
+         ofSubviewAt:(NSInteger)idx {
+    (void)sv; (void)idx;
+    return MAX(minPos, 200.0);
+}
+
+- (CGFloat)splitView:(NSSplitView *)sv constrainMaxCoordinate:(CGFloat)maxPos
+         ofSubviewAt:(NSInteger)idx {
+    (void)idx;
+    return maxPos - 200.0;
+}
+
+// ── Markdown → HTML ───────────────────────────────────────
+
+- (NSString *)htmlEscape:(NSString *)str {
+    NSMutableString *s = [str mutableCopy];
+    [s replaceOccurrencesOfString:@"&"  withString:@"&amp;"  options:0 range:NSMakeRange(0, s.length)];
+    [s replaceOccurrencesOfString:@"<"  withString:@"&lt;"   options:0 range:NSMakeRange(0, s.length)];
+    [s replaceOccurrencesOfString:@">"  withString:@"&gt;"   options:0 range:NSMakeRange(0, s.length)];
+    return [s copy];
+}
+
+- (NSString *)applyInlineMarkdown:(NSString *)text {
+    NSMutableString *s = [[self htmlEscape:text] mutableCopy];
+
+    // Helper: regex replace returning mutable string
+    NSMutableString *(^sub)(NSString *, NSString *) = ^(NSString *pat, NSString *tpl) {
+        NSRegularExpression *rx = [NSRegularExpression
+            regularExpressionWithPattern:pat options:0 error:nil];
+        return [[rx stringByReplacingMatchesInString:s
+                                             options:0
+                                               range:NSMakeRange(0, s.length)
+                                        withTemplate:tpl] mutableCopy];
+    };
+
+    // Extract inline code spans first (protect from bold/italic)
+    NSMutableArray<NSString *> *slots = [NSMutableArray array];
+    {
+        NSRegularExpression *rx = [NSRegularExpression
+            regularExpressionWithPattern:@"`([^`\n]+)`" options:0 error:nil];
+        NSMutableString *buf = [NSMutableString string];
+        __block NSUInteger last = 0;
+        [rx enumerateMatchesInString:s options:0 range:NSMakeRange(0, s.length)
+                          usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *stop){
+            (void)f; (void)stop;
+            [buf appendString:[s substringWithRange:NSMakeRange(last, m.range.location - last)]];
+            NSString *inner = [s substringWithRange:[m rangeAtIndex:1]];
+            [buf appendFormat:@"\x02%lu\x03", (unsigned long)slots.count];
+            [slots addObject:[NSString stringWithFormat:@"<code>%@</code>", inner]];
+            last = NSMaxRange(m.range);
+        }];
+        [buf appendString:[s substringFromIndex:last]];
+        [s setString:buf];
+    }
+
+    s = sub(@"\\*{3}(.+?)\\*{3}",                     @"<strong><em>$1</em></strong>");
+    s = sub(@"\\*{2}(.+?)\\*{2}",                     @"<strong>$1</strong>");
+    s = sub(@"__(.+?)__",                              @"<strong>$1</strong>");
+    s = sub(@"(?<!\\*)\\*([^\\*\n]+)\\*(?!\\*)",       @"<em>$1</em>");
+    s = sub(@"(?<!_)_([^_\n]+)_(?!_)",                 @"<em>$1</em>");
+    s = sub(@"~~(.+?)~~",                              @"<del>$1</del>");
+    s = sub(@"!\\[([^\\]]*)\\]\\(([^\\)]+)\\)",        @"<img alt=\"$1\" src=\"$2\">");
+    s = sub(@"\\[([^\\]]+)\\]\\(([^\\)]+)\\)",         @"<a href=\"$2\">$1</a>");
+
+    // Restore code slots
+    for (NSUInteger i = 0; i < slots.count; i++) {
+        NSString *key = [NSString stringWithFormat:@"\x02%lu\x03", (unsigned long)i];
+        [s replaceOccurrencesOfString:key withString:slots[i]
+                              options:0 range:NSMakeRange(0, s.length)];
+    }
+
+    return [s copy];
+}
+
+- (NSString *)markdownToHTML:(NSString *)rawMD {
+    NSMutableString *out = [NSMutableString string];
+    NSArray<NSString *> *lines = [rawMD componentsSeparatedByString:@"\n"];
+    NSUInteger n = lines.count;
+
+    __block BOOL inFence = NO;
+    __block BOOL inUL    = NO;
+    __block BOOL inOL    = NO;
+    __block NSMutableString *para = [NSMutableString string];
+
+    void (^flushPara)(void) = ^{
+        if (!para.length) return;
+        [out appendFormat:@"<p>%@</p>\n", [self applyInlineMarkdown:[para copy]]];
+        [para setString:@""];
+    };
+    void (^closeLists)(void) = ^{
+        if (inUL) { [out appendString:@"</ul>\n"]; inUL = NO; }
+        if (inOL) { [out appendString:@"</ol>\n"]; inOL = NO; }
+    };
+
+    for (NSUInteger i = 0; i < n; i++) {
+        NSString *line = lines[i];
+
+        // Fenced code block body
+        if (inFence) {
+            if ([line hasPrefix:@"```"] || [line hasPrefix:@"~~~"]) {
+                [out appendString:@"</code></pre>\n"];
+                inFence = NO;
+            } else {
+                [out appendString:[self htmlEscape:line]];
+                [out appendString:@"\n"];
+            }
+            continue;
+        }
+
+        // Fenced code block start
+        if ([line hasPrefix:@"```"] || [line hasPrefix:@"~~~"]) {
+            flushPara(); closeLists();
+            NSString *lang = [[line substringFromIndex:3]
+                stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+            if (lang.length)
+                [out appendFormat:@"<pre><code class=\"language-%@\">",
+                    [self htmlEscape:lang]];
+            else
+                [out appendString:@"<pre><code>"];
+            inFence = YES;
+            continue;
+        }
+
+        // Blank line
+        NSString *trimmed = [line stringByTrimmingCharactersInSet:
+                             [NSCharacterSet whitespaceCharacterSet]];
+        if (!trimmed.length) {
+            flushPara(); closeLists();
+            continue;
+        }
+
+        // ATX headers
+        {
+            NSUInteger h = 0;
+            while (h < 6 && h < line.length && [line characterAtIndex:h] == '#') h++;
+            if (h > 0 && h < line.length && [line characterAtIndex:h] == ' ') {
+                flushPara(); closeLists();
+                NSString *text = [[line substringFromIndex:h + 1]
+                    stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                [out appendFormat:@"<h%lu>%@</h%lu>\n",
+                    (unsigned long)h, [self applyInlineMarkdown:text], (unsigned long)h];
+                continue;
+            }
+        }
+
+        // Setext headers (=== or ---)
+        if (i + 1 < n && !para.length) {
+            NSString *next = [lines[i + 1] stringByTrimmingCharactersInSet:
+                              [NSCharacterSet whitespaceCharacterSet]];
+            if (next.length >= 2) {
+                BOOL allEq = YES, allDash = YES;
+                for (NSUInteger j = 0; j < next.length; j++) {
+                    unichar c = [next characterAtIndex:j];
+                    if (c != '=') allEq   = NO;
+                    if (c != '-') allDash = NO;
+                }
+                if (allEq) {
+                    flushPara(); closeLists();
+                    [out appendFormat:@"<h1>%@</h1>\n", [self applyInlineMarkdown:line]];
+                    i++; continue;
+                }
+                if (allDash) {
+                    flushPara(); closeLists();
+                    [out appendFormat:@"<h2>%@</h2>\n", [self applyInlineMarkdown:line]];
+                    i++; continue;
+                }
+            }
+        }
+
+        // Horizontal rule (---, ***, ___ with optional spaces)
+        {
+            NSString *t = [trimmed stringByReplacingOccurrencesOfString:@" " withString:@""];
+            if (t.length >= 3) {
+                unichar fc = [t characterAtIndex:0];
+                if (fc == '-' || fc == '*' || fc == '_') {
+                    BOOL hr = YES;
+                    for (NSUInteger j = 0; j < t.length; j++)
+                        if ([t characterAtIndex:j] != fc) { hr = NO; break; }
+                    if (hr) {
+                        flushPara(); closeLists();
+                        [out appendString:@"<hr>\n"];
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Blockquote
+        if ([line hasPrefix:@"> "]) {
+            flushPara(); closeLists();
+            [out appendFormat:@"<blockquote><p>%@</p></blockquote>\n",
+                [self applyInlineMarkdown:[line substringFromIndex:2]]];
+            continue;
+        }
+
+        // Unordered list item
+        if (line.length >= 2 &&
+            ([line hasPrefix:@"- "] || [line hasPrefix:@"* "] || [line hasPrefix:@"+ "])) {
+            flushPara();
+            if (inOL) { [out appendString:@"</ol>\n"]; inOL = NO; }
+            if (!inUL) { [out appendString:@"<ul>\n"]; inUL = YES; }
+            [out appendFormat:@"<li>%@</li>\n",
+                [self applyInlineMarkdown:[line substringFromIndex:2]]];
+            continue;
+        }
+
+        // Ordered list item
+        {
+            NSRange dot = [line rangeOfString:@". "];
+            if (dot.location != NSNotFound && dot.location > 0 && dot.location <= 9) {
+                NSString *num = [line substringToIndex:dot.location];
+                BOOL allDigits = YES;
+                for (NSUInteger j = 0; j < num.length; j++) {
+                    unichar c = [num characterAtIndex:j];
+                    if (c < '0' || c > '9') { allDigits = NO; break; }
+                }
+                if (allDigits) {
+                    flushPara();
+                    if (inUL) { [out appendString:@"</ul>\n"]; inUL = NO; }
+                    if (!inOL) { [out appendString:@"<ol>\n"]; inOL = YES; }
+                    [out appendFormat:@"<li>%@</li>\n",
+                        [self applyInlineMarkdown:[line substringFromIndex:dot.location + 2]]];
+                    continue;
+                }
+            }
+        }
+
+        // Paragraph text
+        closeLists();
+        if (para.length) [para appendString:@" "];
+        [para appendString:line];
+    }
+
+    flushPara();
+    if (inUL) [out appendString:@"</ul>\n"];
+    if (inOL) [out appendString:@"</ol>\n"];
+    if (inFence) [out appendString:@"</code></pre>\n"];
+
+    return [out copy];
+}
+
+// ── Markdown Syntax Highlighting ─────────────────────────
+
+- (void)applyMarkdownHighlighting {
+    NSTextStorage *ts = _textView.textStorage;
+    NSString *str     = [ts.string copy];
+    NSUInteger len    = str.length;
+    if (len == 0) return;
+
+    _isHighlighting = YES;
+    [ts beginEditing];
+
+    // Reset all to base color
+    [ts addAttribute:NSForegroundColorAttributeName
+               value:[NSColor textColor]
+               range:NSMakeRange(0, len)];
+
+    NSFont *base   = [self currentFont];
+    NSFont *bold   = [[NSFontManager sharedFontManager] convertFont:base
+                                                       toHaveTrait:NSBoldFontMask];
+    NSFont *italic = [[NSFontManager sharedFontManager] convertFont:base
+                                                       toHaveTrait:NSItalicFontMask];
+
+    NSColor *blue   = [NSColor systemBlueColor];
+    NSColor *orange = [NSColor systemOrangeColor];
+    NSColor *green  = [NSColor systemGreenColor];
+    NSColor *quote  = [NSColor secondaryLabelColor];
+    NSColor *meta   = [NSColor tertiaryLabelColor];
+
+    NSArray<NSString *> *lines = [str componentsSeparatedByString:@"\n"];
+    NSUInteger pos   = 0;
+    BOOL       fence = NO;
+
+    for (NSString *line in lines) {
+        NSUInteger lineLen = line.length;
+        NSRange    lr      = NSMakeRange(pos, lineLen);
+
+        if (fence) {
+            if ([line hasPrefix:@"```"] || [line hasPrefix:@"~~~"]) {
+                [ts addAttribute:NSForegroundColorAttributeName value:meta  range:lr];
+                fence = NO;
+            } else {
+                [ts addAttribute:NSForegroundColorAttributeName value:green range:lr];
+            }
+            pos += lineLen + 1;
+            continue;
+        }
+
+        if ([line hasPrefix:@"```"] || [line hasPrefix:@"~~~"]) {
+            [ts addAttribute:NSForegroundColorAttributeName value:meta range:lr];
+            fence = YES;
+            pos += lineLen + 1;
+            continue;
+        }
+
+        // ATX header
+        NSUInteger h = 0;
+        while (h < 6 && h < lineLen && [line characterAtIndex:h] == '#') h++;
+        if (h > 0 && h < lineLen && [line characterAtIndex:h] == ' ') {
+            [ts addAttribute:NSForegroundColorAttributeName value:blue range:lr];
+            if (bold) [ts addAttribute:NSFontAttributeName value:bold range:lr];
+            pos += lineLen + 1;
+            continue;
+        }
+
+        // Blockquote
+        if ([line hasPrefix:@"> "]) {
+            [ts addAttribute:NSForegroundColorAttributeName value:quote range:lr];
+            pos += lineLen + 1;
+            continue;
+        }
+
+        // Inline code: `...`
+        {
+            NSRegularExpression *rx = [NSRegularExpression
+                regularExpressionWithPattern:@"`[^`\n]+`" options:0 error:nil];
+            [rx enumerateMatchesInString:str options:0 range:lr
+                              usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *stop){
+                (void)f; (void)stop;
+                [ts addAttribute:NSForegroundColorAttributeName value:orange range:m.range];
+            }];
+        }
+
+        // Bold: **...** or __...__
+        {
+            NSRegularExpression *rx = [NSRegularExpression
+                regularExpressionWithPattern:@"(\\*\\*|__)(.+?)(\\*\\*|__)"
+                                     options:0 error:nil];
+            [rx enumerateMatchesInString:str options:0 range:lr
+                              usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *stop){
+                (void)f; (void)stop;
+                if (bold) [ts addAttribute:NSFontAttributeName value:bold range:m.range];
+                NSRange open  = NSMakeRange(m.range.location, 2);
+                NSRange close = NSMakeRange(NSMaxRange(m.range) - 2, 2);
+                [ts addAttribute:NSForegroundColorAttributeName value:meta range:open];
+                [ts addAttribute:NSForegroundColorAttributeName value:meta range:close];
+            }];
+        }
+
+        // Italic: *...* or _..._
+        {
+            NSRegularExpression *rx = [NSRegularExpression
+                regularExpressionWithPattern:@"(?<!\\*)\\*([^\\*\n]+)\\*(?!\\*)|(?<!_)_([^_\n]+)_(?!_)"
+                                     options:0 error:nil];
+            [rx enumerateMatchesInString:str options:0 range:lr
+                              usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *stop){
+                (void)f; (void)stop;
+                if (italic) [ts addAttribute:NSFontAttributeName value:italic range:m.range];
+                NSRange open  = NSMakeRange(m.range.location, 1);
+                NSRange close = NSMakeRange(NSMaxRange(m.range) - 1, 1);
+                [ts addAttribute:NSForegroundColorAttributeName value:meta range:open];
+                [ts addAttribute:NSForegroundColorAttributeName value:meta range:close];
+            }];
+        }
+
+        // Links / images
+        {
+            NSRegularExpression *rx = [NSRegularExpression
+                regularExpressionWithPattern:@"!?\\[[^\\]]*\\]\\([^\\)]*\\)"
+                                     options:0 error:nil];
+            [rx enumerateMatchesInString:str options:0 range:lr
+                              usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *stop){
+                (void)f; (void)stop;
+                [ts addAttribute:NSForegroundColorAttributeName value:blue range:m.range];
+            }];
+        }
+
+        pos += lineLen + 1;
+    }
+
+    [ts endEditing];
+    _isHighlighting = NO;
+}
+
 // ── Font helpers ──────────────────────────────────────────
 
 - (NSFont *)currentFont {
@@ -700,13 +1193,11 @@ static const CGFloat kRulerWidth = 50.0;
     if ([_fontFamily isEqualToString:@"serif"])
         return [NSFont fontWithName:@"Georgia" size:_currentFontSize]
             ?: [NSFont userFontOfSize:_currentFontSize];
-    // mono (default)
     return [NSFont monospacedSystemFontOfSize:_currentFontSize weight:NSFontWeightRegular];
 }
 
 - (void)applyFont {
     NSFont *font = [self currentFont];
-    // Apply to entire text storage preserving content
     NSMutableParagraphStyle *para = [[NSMutableParagraphStyle alloc] init];
     para.lineSpacing = _currentLineSpacing;
     NSDictionary *attrs = @{
@@ -716,11 +1207,11 @@ static const CGFloat kRulerWidth = 50.0;
     };
     NSRange all = NSMakeRange(0, _textView.textStorage.length);
     [_textView.textStorage setAttributes:attrs range:all];
-    // Also set as typing attributes so new text matches
     _textView.typingAttributes = attrs;
-    // Keep the text view's font property in sync (used by ruler height calc)
     _textView.font = font;
     [_rulerView setNeedsDisplay:YES];
+    // Re-apply syntax colors on top of the new font
+    [self applyMarkdownHighlighting];
 }
 
 - (IBAction)setFontMono:(id)sender  { _fontFamily = @"mono";  [self applyFont]; }
@@ -741,7 +1232,6 @@ static const CGFloat kRulerWidth = 50.0;
 }
 
 - (IBAction)setLineSpacing:(id)sender {
-    // tag was stored as tenths
     _currentLineSpacing = [(NSMenuItem *)sender tag] / 10.0;
     [self applyFont];
 }
@@ -786,8 +1276,10 @@ static const CGFloat kRulerWidth = 50.0;
         else                                    { col++; }
     }
 
-    NSString *ver = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"?";
-    _statusBar.stringValue = [NSString stringWithFormat:@"v%@     Words: %lu     Chars: %lu     Ln %lu, Col %lu",
+    NSString *ver = [[NSBundle mainBundle]
+        objectForInfoDictionaryKey:@"CFBundleShortVersionString"] ?: @"?";
+    _statusBar.stringValue = [NSString stringWithFormat:
+        @"v%@     Words: %lu     Chars: %lu     Ln %lu, Col %lu",
         ver, (unsigned long)words, (unsigned long)chars, (unsigned long)ln, (unsigned long)col];
 }
 
