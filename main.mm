@@ -839,9 +839,9 @@ static const CGFloat kRulerWidth = 50.0;
 }
 
 - (NSString *)applyInlineMarkdown:(NSString *)text {
-    NSMutableString *s = [[self htmlEscape:text] mutableCopy];
+    __block NSMutableString *s = [[self htmlEscape:text] mutableCopy];
 
-    // Helper: regex replace returning mutable string
+    // Helper: regex replace — uses __block s so each call sees the previous result
     NSMutableString *(^sub)(NSString *, NSString *) = ^(NSString *pat, NSString *tpl) {
         NSRegularExpression *rx = [NSRegularExpression
             regularExpressionWithPattern:pat options:0 error:nil];
