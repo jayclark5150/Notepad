@@ -288,6 +288,31 @@ static const CGFloat kRulerWidth = 50.0;
 @end
 
 // ============================================================
+// MARK: - Weak Script Message Handler Proxy
+// ============================================================
+
+// WKUserContentController retains its handlers strongly, which would create a
+// retain cycle (AppDelegate → WKWebView → config → ucc → AppDelegate).
+// This proxy holds a weak reference so the cycle is broken.
+@interface WeakScriptMessageHandler : NSObject <WKScriptMessageHandler>
+- (instancetype)initWithDelegate:(id<WKScriptMessageHandler>)delegate;
+@end
+
+@implementation WeakScriptMessageHandler {
+    __weak id<WKScriptMessageHandler> _delegate;
+}
+- (instancetype)initWithDelegate:(id<WKScriptMessageHandler>)delegate {
+    self = [super init];
+    if (self) _delegate = delegate;
+    return self;
+}
+- (void)userContentController:(WKUserContentController *)ucc
+      didReceiveScriptMessage:(WKScriptMessage *)message {
+    [_delegate userContentController:ucc didReceiveScriptMessage:message];
+}
+@end
+
+// ============================================================
 // MARK: - Application Delegate / Main Editor Window
 // ============================================================
 
@@ -421,7 +446,8 @@ static const CGFloat kRulerWidth = 50.0;
 
     WKWebViewConfiguration *wkConfig = [[WKWebViewConfiguration alloc] init];
     WKUserContentController *ucc = [[WKUserContentController alloc] init];
-    [ucc addScriptMessageHandler:self name:@"copyCode"];
+    [ucc addScriptMessageHandler:[[WeakScriptMessageHandler alloc] initWithDelegate:self]
+                             name:@"copyCode"];
     wkConfig.userContentController = ucc;
     _previewWebView = [[WKWebView alloc] initWithFrame:NSMakeRect(0, kStatusBarHeight, 0, editH)
                                          configuration:wkConfig];
@@ -816,7 +842,7 @@ static const CGFloat kRulerWidth = 50.0;
         "hr{border:none;border-top:1px solid %@;margin:1.2em 0;}"
         "del{opacity:.6;}"
         ".code-block{position:relative;border-radius:10px;margin:1em 0;overflow:hidden;}"
-        ".code-pre{margin:0;padding:14px 16px;font-family:Menlo,Monaco,monospace;font-size:.88em;overflow-x:auto;white-space:pre-wrap;word-break:break-all;}"
+        ".code-pre{margin:0;padding:14px 16px;font-family:Menlo,Monaco,monospace;font-size:.88em;overflow-x:auto;white-space:pre-wrap;overflow-wrap:break-word;}"
         ".copy-btn{position:absolute;top:8px;right:8px;border:none;border-radius:6px;"
         "padding:3px 10px;font-size:11px;cursor:pointer;background:rgba(128,128,128,0.25);"
         "color:inherit;font-family:-apple-system,sans-serif;opacity:0;transition:opacity 0.15s;}"
@@ -919,7 +945,7 @@ static const CGFloat kRulerWidth = 50.0;
     NSString *codeBg     = dark ? @"#2a2a2e" : @"#f2f2f2";
     NSString *codeFg     = dark ? @"#e0e0e0" : @"#1a1a1a";
     NSString *tableBdr   = dark ? @"#444444" : @"#d0d0d0";
-    NSString *borderColor= dark ? @"#555555" : @"#d0d0d0";
+    NSString *borderColor= dark ? @"#444444" : @"#d0d0d0";
     NSString *checkColor = dark ? @"#ffa040" : @"#e07b00";
 
     NSMutableString *out = [NSMutableString string];
@@ -927,7 +953,6 @@ static const CGFloat kRulerWidth = 50.0;
     NSUInteger n = lines.count;
 
     __block BOOL inFence  = NO;
-    __block BOOL inUL     = NO;
     __block BOOL inOL     = NO;
     __block NSUInteger olCounter = 0;
     __block NSMutableString *para = [NSMutableString string];
@@ -938,7 +963,6 @@ static const CGFloat kRulerWidth = 50.0;
         [para setString:@""];
     };
     void (^closeLists)(void) = ^{
-        if (inUL) { inUL = NO; }
         if (inOL) { inOL = NO; olCounter = 0; }
     };
 
@@ -1106,7 +1130,6 @@ static const CGFloat kRulerWidth = 50.0;
             ([line hasPrefix:@"- [ ] "] || [line hasPrefix:@"- [x] "] || [line hasPrefix:@"- [X] "])) {
             flushPara();
             if (inOL) { inOL = NO; olCounter = 0; }
-            inUL = YES;
             BOOL checked = ![line hasPrefix:@"- [ ] "];
             NSString *bullet = checked
                 ? [NSString stringWithFormat:@"<font color='%@'>&#x25cf;</font>", checkColor]
@@ -1121,7 +1144,6 @@ static const CGFloat kRulerWidth = 50.0;
             ([line hasPrefix:@"- "] || [line hasPrefix:@"* "] || [line hasPrefix:@"+ "])) {
             flushPara();
             if (inOL) { inOL = NO; olCounter = 0; }
-            inUL = YES;
             [out appendFormat:@"<p style='margin:0 0 .15em 20px;'>&#x2013;&nbsp;%@</p>\n",
                 [self applyInlineMarkdown:[line substringFromIndex:2]]];
             continue;
@@ -1139,7 +1161,6 @@ static const CGFloat kRulerWidth = 50.0;
                 }
                 if (allDigits) {
                     flushPara();
-                    if (inUL) { inUL = NO; }
                     if (!inOL) { inOL = YES; olCounter = 0; }
                     olCounter++;
                     [out appendFormat:@"<p style='margin:0 0 .15em 20px;'>%lu.&nbsp;%@</p>\n",
@@ -1157,7 +1178,7 @@ static const CGFloat kRulerWidth = 50.0;
     }
 
     flushPara();
-    if (inFence) [out appendString:@"</code></pre>\n"];
+    if (inFence) [out appendString:@"</pre></div>\n"];
 
     return [out copy];
 }
