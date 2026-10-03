@@ -69,5 +69,10 @@ codesign: $(BINARY) $(PLIST)
 run: all
 	open $(BUNDLE)
 
+install: all
+	cp -r $(BUNDLE) /Applications/$(BUNDLE)
+	xattr -cr /Applications/$(BUNDLE)
+	@echo "Installed to /Applications/$(BUNDLE)"
+
 clean:
 	rm -rf $(BUNDLE)
