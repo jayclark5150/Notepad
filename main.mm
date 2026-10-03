@@ -291,8 +291,7 @@ static const CGFloat kRulerWidth = 50.0;
 // MARK: - Application Delegate / Main Editor Window
 // ============================================================
 
-@interface AppDelegate : NSObject <NSApplicationDelegate, NSTextViewDelegate,
-                                   NSWindowDelegate, NSSplitViewDelegate>
+@interface AppDelegate : NSObject <NSApplicationDelegate, NSTextViewDelegate, NSWindowDelegate>
 @property (nonatomic, strong) NSWindow              *window;
 @property (nonatomic, strong) NSTextView            *textView;
 @property (nonatomic, strong) NSScrollView          *scrollView;
@@ -306,15 +305,13 @@ static const CGFloat kRulerWidth = 50.0;
 @property (nonatomic, assign) CGFloat                currentLineSpacing;
 @property (nonatomic, strong) NSTextField           *statusBar;
 // Markdown preview
-@property (nonatomic, strong) NSSplitView           *splitView;
 @property (nonatomic, strong) WKWebView             *previewView;
+@property (nonatomic, strong) NSView                *dividerView;
 @property (nonatomic, strong) NSTimer               *previewTimer;
 @property (nonatomic, strong) NSMenuItem            *previewMenuItem;
+@property (nonatomic, assign) BOOL                   previewVisible;
 // Syntax highlighting guard
 @property (nonatomic, assign) BOOL                   isHighlighting;
-// Preview visibility (tracked explicitly; isSubviewCollapsed: is unreliable for
-// programmatically-collapsed panes)
-@property (nonatomic, assign) BOOL                   previewVisible;
 @end
 
 @implementation AppDelegate
@@ -367,19 +364,14 @@ static const CGFloat kRulerWidth = 50.0;
     [_window center];
 
     static const CGFloat kStatusBarHeight = 22.0;
+    static const CGFloat kDividerWidth    = 1.0;
     NSRect cb = _window.contentView.bounds;
+    CGFloat editH = cb.size.height - kStatusBarHeight;
 
-    // Split view replaces the scroll view as the primary layout container
-    _splitView = [[NSSplitView alloc] initWithFrame:
-                    NSMakeRect(0, kStatusBarHeight, cb.size.width, cb.size.height - kStatusBarHeight)];
-    _splitView.vertical          = YES;
-    _splitView.dividerStyle      = NSSplitViewDividerStyleThin;
-    _splitView.autoresizingMask  = NSViewWidthSizable | NSViewHeightSizable;
-    _splitView.delegate          = self;
-
-    // ── Editor pane ──────────────────────────────────────
+    // ── Editor scroll view — fills window; shrinks when preview is shown ──
     _scrollView = [[NSScrollView alloc] initWithFrame:
-                    NSMakeRect(0, 0, _splitView.frame.size.width, _splitView.frame.size.height)];
+                    NSMakeRect(0, kStatusBarHeight, cb.size.width, editH)];
+    _scrollView.autoresizingMask      = NSViewWidthSizable | NSViewHeightSizable;
     _scrollView.hasVerticalScroller   = YES;
     _scrollView.hasHorizontalScroller = NO;
     _scrollView.autohidesScrollers    = YES;
@@ -420,17 +412,23 @@ static const CGFloat kRulerWidth = 50.0;
     _scrollView.verticalRulerView  = _rulerView;
     _scrollView.rulersVisible      = YES;
 
-    // ── Preview pane ─────────────────────────────────────
+    // ── Divider and preview — hidden until toggled ───────
+    _dividerView = [[NSView alloc] initWithFrame:
+                     NSMakeRect(0, kStatusBarHeight, kDividerWidth, editH)];
+    _dividerView.autoresizingMask = NSViewHeightSizable;
+    _dividerView.wantsLayer       = YES;
+    _dividerView.hidden           = YES;
+
     WKWebViewConfiguration *wkConfig = [[WKWebViewConfiguration alloc] init];
     _previewView = [[WKWebView alloc]
-        initWithFrame:NSMakeRect(0, 0, 0, _splitView.frame.size.height)
+        initWithFrame:NSMakeRect(0, kStatusBarHeight, 0, editH)
         configuration:wkConfig];
+    _previewView.autoresizingMask = NSViewHeightSizable;
+    _previewView.hidden           = YES;
 
-    [_splitView addSubview:_scrollView];
-    [_splitView addSubview:_previewView];
-    _previewView.hidden = YES;
-
-    [_window.contentView addSubview:_splitView];
+    [_window.contentView addSubview:_scrollView];
+    [_window.contentView addSubview:_dividerView];
+    [_window.contentView addSubview:_previewView];
 
     // ── Status bar ───────────────────────────────────────
     _statusBar = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, cb.size.width, kStatusBarHeight)];
@@ -741,17 +739,44 @@ static const CGFloat kRulerWidth = 50.0;
 
 - (IBAction)toggleMarkdownPreview:(id)sender {
     if (_previewVisible) {
-        _previewView.hidden = YES;
+        _previewView.hidden  = YES;
+        _dividerView.hidden  = YES;
+        _scrollView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+        _scrollView.frame    = [self editorFrameForFullWidth];
         _previewMenuItem.title = @"Show Markdown Preview";
         _previewVisible = NO;
     } else {
-        _previewView.hidden = NO;
-        // setPosition only works after the subview is unhidden
-        [_splitView setPosition:_splitView.frame.size.width * 0.55 ofDividerAtIndex:0];
+        _scrollView.autoresizingMask = NSViewHeightSizable;
+        [self applyPreviewLayout];
+        _previewView.hidden  = NO;
+        _dividerView.hidden  = NO;
         _previewMenuItem.title = @"Hide Markdown Preview";
         _previewVisible = YES;
         [self updatePreview];
     }
+}
+
+- (NSRect)editorFrameForFullWidth {
+    static const CGFloat kStatusBarHeight = 22.0;
+    NSRect cb = _window.contentView.bounds;
+    return NSMakeRect(0, kStatusBarHeight, cb.size.width, cb.size.height - kStatusBarHeight);
+}
+
+- (void)applyPreviewLayout {
+    static const CGFloat kStatusBarHeight = 22.0;
+    static const CGFloat kDividerWidth    = 1.0;
+    NSRect cb    = _window.contentView.bounds;
+    CGFloat editH = cb.size.height - kStatusBarHeight;
+    CGFloat total = cb.size.width;
+    CGFloat previewW = floor(total * 0.45);
+    CGFloat editorW  = total - previewW - kDividerWidth;
+
+    _scrollView.frame  = NSMakeRect(0, kStatusBarHeight, editorW, editH);
+    _dividerView.frame = NSMakeRect(editorW, kStatusBarHeight, kDividerWidth, editH);
+    _previewView.frame = NSMakeRect(editorW + kDividerWidth, kStatusBarHeight, previewW, editH);
+
+    // Keep divider visible as a separator line
+    _dividerView.layer.backgroundColor = [NSColor separatorColor].CGColor;
 }
 
 - (void)schedulePreviewUpdate {
@@ -805,20 +830,6 @@ static const CGFloat kRulerWidth = 50.0;
     NSString *page = [NSString stringWithFormat:kHTMLTemplate,
                       [self markdownToHTML:_textView.string]];
     [_previewView loadHTMLString:page baseURL:nil];
-}
-
-// ── NSSplitViewDelegate ───────────────────────────────────
-
-- (CGFloat)splitView:(NSSplitView *)sv constrainMinCoordinate:(CGFloat)minPos
-         ofSubviewAt:(NSInteger)idx {
-    (void)sv; (void)idx;
-    return MAX(minPos, 200.0);
-}
-
-- (CGFloat)splitView:(NSSplitView *)sv constrainMaxCoordinate:(CGFloat)maxPos
-         ofSubviewAt:(NSInteger)idx {
-    (void)sv; (void)idx;
-    return maxPos; // no minimum on right pane so it can collapse to 0
 }
 
 // ── Markdown → HTML ───────────────────────────────────────
@@ -1241,6 +1252,10 @@ static const CGFloat kRulerWidth = 50.0;
 }
 
 // ── NSWindowDelegate ──────────────────────────────────────
+
+- (void)windowDidResize:(NSNotification *)note {
+    if (_previewVisible) [self applyPreviewLayout];
+}
 
 - (BOOL)windowShouldClose:(NSWindow *)sender {
     if (!_isDirty) return YES;
