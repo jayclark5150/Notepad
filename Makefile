@@ -74,5 +74,14 @@ install: all
 	xattr -cr /Applications/$(BUNDLE)
 	@echo "Installed to /Applications/$(BUNDLE)"
 
+dmg: all
+	$(eval DMG_DIR := $(shell mktemp -d))
+	cp -r $(BUNDLE) "$(DMG_DIR)/$(BUNDLE)"
+	ln -s /Applications "$(DMG_DIR)/Applications"
+	hdiutil create -volname "$(APP)" -srcfolder "$(DMG_DIR)" \
+	    -ov -format UDZO -o "$(APP).dmg"
+	rm -rf "$(DMG_DIR)"
+	@echo "Created $(APP).dmg"
+
 clean:
 	rm -rf $(BUNDLE)
