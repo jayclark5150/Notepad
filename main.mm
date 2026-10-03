@@ -336,10 +336,6 @@ static const CGFloat kRulerWidth = 50.0;
         [NSApp activateIgnoringOtherApps:YES];
 #pragma clang diagnostic pop
     }
-    // Defer hiding the preview until after the window has been laid out
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [self->_splitView setPosition:self->_splitView.frame.size.width ofDividerAtIndex:0];
-    });
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)app {
@@ -432,6 +428,7 @@ static const CGFloat kRulerWidth = 50.0;
 
     [_splitView addSubview:_scrollView];
     [_splitView addSubview:_previewView];
+    _previewView.hidden = YES;
 
     [_window.contentView addSubview:_splitView];
 
@@ -744,12 +741,13 @@ static const CGFloat kRulerWidth = 50.0;
 
 - (IBAction)toggleMarkdownPreview:(id)sender {
     if (_previewVisible) {
-        [_splitView setPosition:_splitView.frame.size.width ofDividerAtIndex:0];
+        _previewView.hidden = YES;
         _previewMenuItem.title = @"Show Markdown Preview";
         _previewVisible = NO;
     } else {
-        CGFloat total = _splitView.frame.size.width;
-        [_splitView setPosition:total * 0.55 ofDividerAtIndex:0];
+        _previewView.hidden = NO;
+        // setPosition only works after the subview is unhidden
+        [_splitView setPosition:_splitView.frame.size.width * 0.55 ofDividerAtIndex:0];
         _previewMenuItem.title = @"Hide Markdown Preview";
         _previewVisible = YES;
         [self updatePreview];
@@ -810,11 +808,6 @@ static const CGFloat kRulerWidth = 50.0;
 }
 
 // ── NSSplitViewDelegate ───────────────────────────────────
-
-- (BOOL)splitView:(NSSplitView *)sv canCollapseSubview:(NSView *)subview {
-    (void)sv;
-    return subview == _previewView;
-}
 
 - (CGFloat)splitView:(NSSplitView *)sv constrainMinCoordinate:(CGFloat)minPos
          ofSubviewAt:(NSInteger)idx {
