@@ -36,8 +36,7 @@ CXXFLAGS = -arch $(ARCH) \
 LDFLAGS  = -arch $(ARCH) \
            -isysroot $(SDK) \
            -mmacosx-version-min=$(MIN_VER) \
-           -framework Cocoa \
-           -framework WebKit
+           -framework Cocoa
 
 .PHONY: all run clean
 

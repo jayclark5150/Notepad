@@ -6,7 +6,6 @@
 
 #import <Cocoa/Cocoa.h>
 #import <Foundation/Foundation.h>
-#import <WebKit/WebKit.h>
 
 // ============================================================
 // MARK: - Line Number Ruler View
@@ -304,8 +303,9 @@ static const CGFloat kRulerWidth = 50.0;
 @property (nonatomic, copy)   NSString              *fontFamily;
 @property (nonatomic, assign) CGFloat                currentLineSpacing;
 @property (nonatomic, strong) NSTextField           *statusBar;
-// Markdown preview
-@property (nonatomic, strong) WKWebView             *previewView;
+// Markdown preview (NSTextView-based — in-process, no sandbox issues)
+@property (nonatomic, strong) NSScrollView          *previewScrollView;
+@property (nonatomic, strong) NSTextView            *previewTextView;
 @property (nonatomic, strong) NSView                *dividerView;
 @property (nonatomic, strong) NSTimer               *previewTimer;
 @property (nonatomic, strong) NSMenuItem            *previewMenuItem;
@@ -419,16 +419,33 @@ static const CGFloat kRulerWidth = 50.0;
     _dividerView.wantsLayer       = YES;
     _dividerView.hidden           = YES;
 
-    WKWebViewConfiguration *wkConfig = [[WKWebViewConfiguration alloc] init];
-    _previewView = [[WKWebView alloc]
-        initWithFrame:NSMakeRect(0, kStatusBarHeight, 0, editH)
-        configuration:wkConfig];
-    _previewView.autoresizingMask = NSViewHeightSizable;
-    _previewView.hidden           = YES;
+    // NSScrollView + NSTextView as the preview pane (in-process rendering,
+    // no WKWebView sandbox/process issues)
+    _previewScrollView = [[NSScrollView alloc] initWithFrame:
+                           NSMakeRect(0, kStatusBarHeight, 0, editH)];
+    _previewScrollView.autoresizingMask      = NSViewHeightSizable;
+    _previewScrollView.hasVerticalScroller   = YES;
+    _previewScrollView.hasHorizontalScroller = NO;
+    _previewScrollView.autohidesScrollers    = YES;
+    _previewScrollView.hidden                = YES;
+
+    NSTextView *ptv = [[NSTextView alloc]
+        initWithFrame:NSMakeRect(0, 0, _previewScrollView.contentSize.width,
+                                 _previewScrollView.contentSize.height)];
+    ptv.autoresizingMask        = NSViewWidthSizable | NSViewHeightSizable;
+    ptv.editable                = NO;
+    ptv.selectable              = YES;
+    ptv.richText                = YES;
+    ptv.backgroundColor         = [NSColor textBackgroundColor];
+    ptv.drawsBackground         = YES;
+    ptv.textContainerInset      = NSMakeSize(20, 20);
+    ptv.automaticLinkDetectionEnabled = YES;
+    _previewScrollView.documentView = ptv;
+    _previewTextView = ptv;
 
     [_window.contentView addSubview:_scrollView];
     [_window.contentView addSubview:_dividerView];
-    [_window.contentView addSubview:_previewView];
+    [_window.contentView addSubview:_previewScrollView];
 
     // ── Status bar ───────────────────────────────────────
     _statusBar = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, cb.size.width, kStatusBarHeight)];
@@ -739,8 +756,8 @@ static const CGFloat kRulerWidth = 50.0;
 
 - (IBAction)toggleMarkdownPreview:(id)sender {
     if (_previewVisible) {
-        _previewView.hidden  = YES;
-        _dividerView.hidden  = YES;
+        _previewScrollView.hidden = YES;
+        _dividerView.hidden       = YES;
         _scrollView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
         _scrollView.frame    = [self editorFrameForFullWidth];
         _previewMenuItem.title = @"Show Markdown Preview";
@@ -748,8 +765,8 @@ static const CGFloat kRulerWidth = 50.0;
     } else {
         _scrollView.autoresizingMask = NSViewHeightSizable;
         [self applyPreviewLayout];
-        _previewView.hidden  = NO;
-        _dividerView.hidden  = NO;
+        _previewScrollView.hidden = NO;
+        _dividerView.hidden       = NO;
         _previewMenuItem.title = @"Hide Markdown Preview";
         _previewVisible = YES;
         [self updatePreview];
@@ -771,11 +788,10 @@ static const CGFloat kRulerWidth = 50.0;
     CGFloat previewW = floor(total * 0.45);
     CGFloat editorW  = total - previewW - kDividerWidth;
 
-    _scrollView.frame  = NSMakeRect(0, kStatusBarHeight, editorW, editH);
-    _dividerView.frame = NSMakeRect(editorW, kStatusBarHeight, kDividerWidth, editH);
-    _previewView.frame = NSMakeRect(editorW + kDividerWidth, kStatusBarHeight, previewW, editH);
+    _scrollView.frame        = NSMakeRect(0, kStatusBarHeight, editorW, editH);
+    _dividerView.frame       = NSMakeRect(editorW, kStatusBarHeight, kDividerWidth, editH);
+    _previewScrollView.frame = NSMakeRect(editorW + kDividerWidth, kStatusBarHeight, previewW, editH);
 
-    // Keep divider visible as a separator line
     _dividerView.layer.backgroundColor = [NSColor separatorColor].CGColor;
 }
 
@@ -791,45 +807,47 @@ static const CGFloat kRulerWidth = 50.0;
 - (void)updatePreview {
     if (!_previewVisible) return;
 
-    static NSString *kHTMLTemplate = nil;
-    if (!kHTMLTemplate) {
-        kHTMLTemplate =
-            @"<!DOCTYPE html><html><head><meta charset='utf-8'><style>"
-            "body{font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;"
-            "font-size:15px;line-height:1.65;padding:24px 36px;max-width:820px;"
-            "margin:0 auto;color:#1d1d1f;background:#fff;}"
-            "@media(prefers-color-scheme:dark){"
-            "body{color:#f5f5f7;background:#1c1c1e;}"
-            "code,pre{background:#2c2c2e;}"
-            "blockquote{border-color:#48484a;color:#98989f;}"
-            "a{color:#2997ff;}"
-            "hr{border-color:#3a3a3c;}"
-            "th,td{border-color:#3a3a3c;}"
-            "th{background:#2c2c2e;}"
-            "}"
-            "h1,h2,h3,h4,h5,h6{font-weight:600;margin-top:1.4em;margin-bottom:.4em;line-height:1.2;}"
-            "h1{font-size:2em;}h2{font-size:1.5em;}h3{font-size:1.25em;}"
-            "p{margin:.8em 0;}"
-            "code{font-family:'SF Mono',Menlo,Monaco,monospace;"
-            "background:#f5f5f7;padding:2px 6px;border-radius:4px;font-size:.88em;}"
-            "pre{background:#f5f5f7;padding:14px 18px;border-radius:8px;overflow-x:auto;margin:1em 0;}"
-            "pre code{background:none;padding:0;font-size:.9em;}"
-            "blockquote{border-left:4px solid #d1d1d6;margin:1em 0;padding:4px 0 4px 16px;color:#6c6c70;}"
-            "blockquote p{margin:.3em 0;}"
-            "a{color:#0066cc;text-decoration:none;}a:hover{text-decoration:underline;}"
-            "hr{border:none;border-top:1px solid #d1d1d6;margin:1.5em 0;}"
-            "ul,ol{margin:.8em 0;padding-left:1.8em;}li{margin:.3em 0;}"
-            "table{border-collapse:collapse;width:100%;margin:1em 0;}"
-            "th,td{border:1px solid #d1d1d6;padding:8px 12px;text-align:left;}"
-            "th{background:#f5f5f7;font-weight:600;}"
-            "img{max-width:100%;height:auto;border-radius:4px;}"
-            "del{color:#98989f;}"
-            "</style></head><body>%@</body></html>";
-    }
+    NSString *body = [self markdownToHTML:_textView.string];
 
-    NSString *page = [NSString stringWithFormat:kHTMLTemplate,
-                      [self markdownToHTML:_textView.string]];
-    [_previewView loadHTMLString:page baseURL:nil];
+    // Wrap in minimal HTML with system-font CSS so NSAttributedString renders nicely
+    NSAppearanceName matched = [_window.effectiveAppearance
+        bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]];
+    BOOL dark = [matched isEqualToString:NSAppearanceNameDarkAqua];
+    NSString *fg   = dark ? @"#f5f5f7" : @"#1d1d1f";
+    NSString *bg   = dark ? @"#1c1c1e" : @"#ffffff";
+    NSString *codeBg = dark ? @"#2c2c2e" : @"#f5f5f7";
+    NSString *qFg  = dark ? @"#98989f" : @"#6c6c70";
+
+    NSString *html = [NSString stringWithFormat:
+        @"<html><head><meta charset='utf-8'><style>"
+        "body{font-family:-apple-system,sans-serif;font-size:15px;line-height:1.65;"
+        "padding:20px 28px;color:%@;background:%@;}"
+        "h1,h2,h3,h4,h5,h6{font-weight:600;margin-top:1.2em;margin-bottom:.3em;}"
+        "h1{font-size:1.8em;}h2{font-size:1.4em;}h3{font-size:1.15em;}"
+        "p{margin:.7em 0;}"
+        "code{font-family:Menlo,Monaco,monospace;background:%@;padding:1px 5px;border-radius:3px;font-size:.88em;}"
+        "pre{background:%@;padding:12px 16px;border-radius:6px;margin:1em 0;}"
+        "pre code{background:none;padding:0;}"
+        "blockquote{border-left:3px solid #888;margin:1em 0;padding:2px 0 2px 14px;color:%@;}"
+        "a{color:#0066cc;}"
+        "ul,ol{margin:.7em 0;padding-left:1.6em;}li{margin:.2em 0;}"
+        "hr{border:none;border-top:1px solid #888;margin:1.2em 0;}"
+        "del{opacity:.6;}"
+        "</style></head><body>%@</body></html>",
+        fg, bg, codeBg, codeBg, qFg, body];
+
+    NSData *data = [html dataUsingEncoding:NSUTF8StringEncoding];
+    NSError *err = nil;
+    NSAttributedString *attrStr = [[NSAttributedString alloc]
+        initWithData:data
+             options:@{NSDocumentTypeDocumentAttribute: NSHTMLTextDocumentType,
+                       NSCharacterEncodingDocumentAttribute: @(NSUTF8StringEncoding)}
+  documentAttributes:nil
+               error:&err];
+
+    if (attrStr) {
+        [_previewTextView.textStorage setAttributedString:attrStr];
+    }
 }
 
 // ── Markdown → HTML ───────────────────────────────────────
