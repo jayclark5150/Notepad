@@ -336,6 +336,10 @@ static const CGFloat kRulerWidth = 50.0;
         [NSApp activateIgnoringOtherApps:YES];
 #pragma clang diagnostic pop
     }
+    // Defer hiding the preview until after the window has been laid out
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self->_splitView setPosition:self->_splitView.frame.size.width ofDividerAtIndex:0];
+    });
 }
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)app {
@@ -428,9 +432,6 @@ static const CGFloat kRulerWidth = 50.0;
 
     [_splitView addSubview:_scrollView];
     [_splitView addSubview:_previewView];
-
-    // Collapse the preview pane initially
-    [_splitView setPosition:_splitView.frame.size.width ofDividerAtIndex:0];
 
     [_window.contentView addSubview:_splitView];
 
@@ -823,8 +824,8 @@ static const CGFloat kRulerWidth = 50.0;
 
 - (CGFloat)splitView:(NSSplitView *)sv constrainMaxCoordinate:(CGFloat)maxPos
          ofSubviewAt:(NSInteger)idx {
-    (void)idx;
-    return maxPos - 200.0;
+    (void)sv; (void)idx;
+    return maxPos; // no minimum on right pane so it can collapse to 0
 }
 
 // ── Markdown → HTML ───────────────────────────────────────
