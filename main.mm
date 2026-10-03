@@ -312,6 +312,9 @@ static const CGFloat kRulerWidth = 50.0;
 @property (nonatomic, strong) NSMenuItem            *previewMenuItem;
 // Syntax highlighting guard
 @property (nonatomic, assign) BOOL                   isHighlighting;
+// Preview visibility (tracked explicitly; isSubviewCollapsed: is unreliable for
+// programmatically-collapsed panes)
+@property (nonatomic, assign) BOOL                   previewVisible;
 @end
 
 @implementation AppDelegate
@@ -739,15 +742,16 @@ static const CGFloat kRulerWidth = 50.0;
 // ── Markdown Preview ──────────────────────────────────────
 
 - (IBAction)toggleMarkdownPreview:(id)sender {
-    BOOL isCollapsed = [_splitView isSubviewCollapsed:_previewView];
-    if (isCollapsed) {
+    if (_previewVisible) {
+        [_splitView setPosition:_splitView.frame.size.width ofDividerAtIndex:0];
+        _previewMenuItem.title = @"Show Markdown Preview";
+        _previewVisible = NO;
+    } else {
         CGFloat total = _splitView.frame.size.width;
         [_splitView setPosition:total * 0.55 ofDividerAtIndex:0];
         _previewMenuItem.title = @"Hide Markdown Preview";
+        _previewVisible = YES;
         [self updatePreview];
-    } else {
-        [_splitView setPosition:_splitView.frame.size.width ofDividerAtIndex:0];
-        _previewMenuItem.title = @"Show Markdown Preview";
     }
 }
 
@@ -761,7 +765,7 @@ static const CGFloat kRulerWidth = 50.0;
 }
 
 - (void)updatePreview {
-    if ([_splitView isSubviewCollapsed:_previewView]) return;
+    if (!_previewVisible) return;
 
     static NSString *kHTMLTemplate = nil;
     if (!kHTMLTemplate) {
