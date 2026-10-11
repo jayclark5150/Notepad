@@ -2,7 +2,7 @@ v# Notepad
 
 A minimal plain-text editor for macOS (Apple Silicon).
 
-![macOS](https://img.shields.io/badge/macOS-12.0%2B-blue) ![Architecture](https://img.shields.io/badge/arch-arm64-green) ![Version](https://img.shields.io/badge/version-1.0.5-orange)
+![macOS](https://img.shields.io/badge/macOS-12.0%2B-blue) ![Architecture](https://img.shields.io/badge/arch-arm64-green) ![Version](https://img.shields.io/badge/version-1.0.6-orange)
 
 ## Features
 
@@ -29,27 +29,43 @@ A minimal plain-text editor for macOS (Apple Silicon).
 
 ## Build
 
-Requires macOS 12.0+, Apple Silicon (arm64), and Xcode Command Line Tools.
+Requires macOS 12.0+, Apple Silicon (arm64), and Xcode Command Line Tools (`xcode-select --install`).
+
+On a fresh clone, generate the app icon first. The Makefile needs `Notepad.icns`, which is not stored in the repo:
 
 ```bash
-make        # Build Notepad.app
-make run    # Build and launch
-make clean  # Remove build artifacts
+./make_icon.sh   # builds Notepad.icns from icon_src.png
 ```
 
-To sign with a Developer ID instead of ad-hoc, set `SIGN_ID`:
+Then:
 
 ```bash
-make SIGN_ID="Developer ID Application: Your Name (TEAMID)"
+make          # Build Notepad.app
+make run      # Build and launch
+make install  # Build and copy to /Applications
+make dmg      # Build and create Notepad.dmg (drag-to-Applications installer)
+make clean    # Remove build artifacts
 ```
 
-## Icon
-
-To regenerate the app icon from `icon_src.png`:
+By default the app is ad-hoc signed, so the app and DMG run only on the Mac that built them. To sign with a Developer ID instead, set `SIGN_ID`:
 
 ```bash
-./make_icon.sh
+make dmg SIGN_ID="Developer ID Application: Your Name (TEAMID)"
 ```
+
+A Developer ID build must also be notarized before Gatekeeper allows it on other Macs. See `buildme.md`.
+
+## Keyboard Shortcuts
+
+| Action | Shortcut |
+|---|---|
+| Toggle Markdown preview | Cmd+Shift+P |
+| Toggle line numbers | Cmd+Shift+L |
+| Editor text bigger / smaller | Cmd++ / Cmd+- |
+| Preview text bigger / smaller | Cmd+Option+= / Cmd+Option+- |
+| Preview text actual size | Cmd+Option+0 |
+| Find & Replace | Cmd+F |
+| Reset editor/preview split | Double-click the divider |
 
 ## License
 
