@@ -2,7 +2,7 @@ v# Notepad
 
 A minimal plain-text editor for macOS (Apple Silicon).
 
-![macOS](https://img.shields.io/badge/macOS-12.0%2B-blue) ![Architecture](https://img.shields.io/badge/arch-arm64-green) ![Version](https://img.shields.io/badge/version-1.0.4-orange)
+![macOS](https://img.shields.io/badge/macOS-12.0%2B-blue) ![Architecture](https://img.shields.io/badge/arch-arm64-green) ![Version](https://img.shields.io/badge/version-1.0.5-orange)
 
 ## Features
 
@@ -12,6 +12,7 @@ A minimal plain-text editor for macOS (Apple Silicon).
 - Adjustable font size (8–72 pt) and line spacing
 - Markdown syntax highlighting in the editor
 - Live Markdown preview pane (Cmd+Shift+P)
+- Adjustable preview text size (Cmd+Option+= / Cmd+Option+- / Cmd+Option+0 to reset), remembered between launches
 - Code blocks rendered as rounded rectangles with a one-click Copy button
 - Save-aware close and quit (window and app will not close if a save fails or is cancelled)
 - UTF-8 with Latin-1 fallback for file reading

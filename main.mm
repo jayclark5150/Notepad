@@ -335,9 +335,15 @@ static const CGFloat kRulerWidth = 50.0;
 @property (nonatomic, strong) NSTimer               *previewTimer;
 @property (nonatomic, strong) NSMenuItem            *previewMenuItem;
 @property (nonatomic, assign) BOOL                   previewVisible;
+@property (nonatomic, assign) CGFloat                previewFontSize;
 // Syntax highlighting guard
 @property (nonatomic, assign) BOOL                   isHighlighting;
 @end
+
+static NSString *const kPreviewFontSizeKey     = @"PreviewFontSize";
+static const CGFloat   kPreviewFontSizeDefault = 15.0;
+static const CGFloat   kPreviewFontSizeMin     = 8.0;
+static const CGFloat   kPreviewFontSizeMax     = 72.0;
 
 @implementation AppDelegate
 
@@ -347,6 +353,9 @@ static const CGFloat kRulerWidth = 50.0;
     _currentFontSize    = 14.0;
     _fontFamily         = @"mono";
     _currentLineSpacing = 0.0;
+    double savedPreviewSize = [[NSUserDefaults standardUserDefaults] doubleForKey:kPreviewFontSizeKey];
+    _previewFontSize    = (savedPreviewSize >= kPreviewFontSizeMin && savedPreviewSize <= kPreviewFontSizeMax)
+                              ? savedPreviewSize : kPreviewFontSizeDefault;
     [self buildMenu];
     [self buildWindow];
     [self.window makeKeyAndOrderFront:nil];
@@ -609,6 +618,25 @@ static const CGFloat kRulerWidth = 50.0;
     _previewMenuItem.target = self;
     _previewMenuItem.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
 
+    NSMenuItem *previewSizeItem = [viewMenu addItemWithTitle:@"Preview Text Size"
+                                                      action:nil
+                                               keyEquivalent:@""];
+    NSMenu *previewSizeMenu = [[NSMenu alloc] initWithTitle:@"Preview Text Size"];
+    NSMenuItem *previewBigger  = [previewSizeMenu addItemWithTitle:@"Bigger"
+                                                            action:@selector(previewFontSizeUp:)
+                                                     keyEquivalent:@"="];
+    NSMenuItem *previewSmaller = [previewSizeMenu addItemWithTitle:@"Smaller"
+                                                            action:@selector(previewFontSizeDown:)
+                                                     keyEquivalent:@"-"];
+    NSMenuItem *previewActual  = [previewSizeMenu addItemWithTitle:@"Actual Size"
+                                                            action:@selector(previewFontSizeReset:)
+                                                     keyEquivalent:@"0"];
+    for (NSMenuItem *it in @[previewBigger, previewSmaller, previewActual]) {
+        it.target = self;
+        it.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
+    }
+    previewSizeItem.submenu = previewSizeMenu;
+
     viewItem.submenu = viewMenu;
 
     (void)findItem;
@@ -832,7 +860,7 @@ static const CGFloat kRulerWidth = 50.0;
 
     NSString *html = [NSString stringWithFormat:
         @"<html><head><meta charset='utf-8'><style>"
-        "body{font-family:-apple-system,sans-serif;font-size:15px;line-height:1.65;"
+        "body{font-family:-apple-system,sans-serif;font-size:%gpx;line-height:1.65;"
         "padding:20px 28px;color:%@;background:%@;}"
         "h1,h2,h3,h4,h5,h6{font-weight:700;margin-top:1.3em;margin-bottom:.2em;color:%@;}"
         "h1{font-size:1.6em;}h2{font-size:1.25em;}h3{font-size:1.1em;}"
@@ -858,10 +886,24 @@ static const CGFloat kRulerWidth = 50.0;
         "setTimeout(function(){btn.textContent='Copy';btn.classList.remove('copied');},2000);}"
         "</script>"
         "</body></html>",
-        fg, bg, fg, inlineCodeBg, inlineCodeFg, linkColor, borderColor, body];
+        (double)_previewFontSize, fg, bg, fg, inlineCodeBg, inlineCodeFg, linkColor, borderColor, body];
 
     [_previewWebView loadHTMLString:html baseURL:nil];
 }
+
+- (void)setPreviewFontSizeTo:(CGFloat)size {
+    _previewFontSize = MIN(MAX(size, kPreviewFontSizeMin), kPreviewFontSizeMax);
+    [[NSUserDefaults standardUserDefaults] setDouble:_previewFontSize forKey:kPreviewFontSizeKey];
+    if (!_previewVisible) return;
+    // Restyle in place so the preview keeps its scroll position
+    NSString *js = [NSString stringWithFormat:@"document.body.style.fontSize='%gpx';",
+                                              (double)_previewFontSize];
+    [_previewWebView evaluateJavaScript:js completionHandler:nil];
+}
+
+- (IBAction)previewFontSizeUp:(id)sender    { [self setPreviewFontSizeTo:_previewFontSize + 1.0]; }
+- (IBAction)previewFontSizeDown:(id)sender  { [self setPreviewFontSizeTo:_previewFontSize - 1.0]; }
+- (IBAction)previewFontSizeReset:(id)sender { [self setPreviewFontSizeTo:kPreviewFontSizeDefault]; }
 
 // ── WKScriptMessageHandler ────────────────────────────────
 
