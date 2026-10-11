@@ -313,10 +313,79 @@ static const CGFloat kRulerWidth = 50.0;
 @end
 
 // ============================================================
+// MARK: - Split Divider View
+// ============================================================
+
+// Draggable divider between the editor and the preview. It draws a 1 px line
+// but is wider than that so it is easy to grab; the extra width overlaps the
+// preview's left padding. Double-click resets the split.
+static const CGFloat kSplitHitWidth   = 7.0;
+static const CGFloat kSplitLineOffset = 1.0;   // line's x within the hit area
+
+@class SplitDividerView;
+
+@protocol SplitDividerDelegate <NSObject>
+- (void)splitDivider:(SplitDividerView *)divider draggedToX:(CGFloat)lineX;
+- (void)splitDividerDoubleClicked:(SplitDividerView *)divider;
+@end
+
+@interface SplitDividerView : NSView
+@property (nonatomic, weak) id<SplitDividerDelegate> delegate;
+@end
+
+@implementation SplitDividerView {
+    CGFloat _grabOffset;
+}
+
+- (instancetype)initWithFrame:(NSRect)frame {
+    self = [super initWithFrame:frame];
+    if (self) {
+        [self addTrackingArea:[[NSTrackingArea alloc]
+            initWithRect:NSZeroRect
+                 options:NSTrackingCursorUpdate | NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect
+                   owner:self
+                userInfo:nil]];
+    }
+    return self;
+}
+
+- (void)drawRect:(NSRect)dirtyRect {
+    [[NSColor separatorColor] setFill];
+    NSRectFill(NSMakeRect(kSplitLineOffset, 0, 1.0, self.bounds.size.height));
+}
+
+- (void)resetCursorRects {
+    [self addCursorRect:self.bounds cursor:[NSCursor resizeLeftRightCursor]];
+}
+
+- (void)cursorUpdate:(NSEvent *)event {
+    [[NSCursor resizeLeftRightCursor] set];
+}
+
+- (BOOL)acceptsFirstMouse:(NSEvent *)event { return YES; }
+
+- (void)mouseDown:(NSEvent *)event {
+    if (event.clickCount == 2) {
+        [_delegate splitDividerDoubleClicked:self];
+        return;
+    }
+    NSPoint p = [self.superview convertPoint:event.locationInWindow fromView:nil];
+    _grabOffset = p.x - (self.frame.origin.x + kSplitLineOffset);
+}
+
+- (void)mouseDragged:(NSEvent *)event {
+    [[NSCursor resizeLeftRightCursor] set];
+    NSPoint p = [self.superview convertPoint:event.locationInWindow fromView:nil];
+    [_delegate splitDivider:self draggedToX:p.x - _grabOffset];
+}
+
+@end
+
+// ============================================================
 // MARK: - Application Delegate / Main Editor Window
 // ============================================================
 
-@interface AppDelegate : NSObject <NSApplicationDelegate, NSTextViewDelegate, NSWindowDelegate, WKScriptMessageHandler>
+@interface AppDelegate : NSObject <NSApplicationDelegate, NSTextViewDelegate, NSWindowDelegate, WKScriptMessageHandler, SplitDividerDelegate>
 @property (nonatomic, strong) NSWindow              *window;
 @property (nonatomic, strong) NSTextView            *textView;
 @property (nonatomic, strong) NSScrollView          *scrollView;
@@ -331,11 +400,12 @@ static const CGFloat kRulerWidth = 50.0;
 @property (nonatomic, strong) NSTextField           *statusBar;
 // Markdown preview
 @property (nonatomic, strong) WKWebView             *previewWebView;
-@property (nonatomic, strong) NSView                *dividerView;
+@property (nonatomic, strong) SplitDividerView      *dividerView;
 @property (nonatomic, strong) NSTimer               *previewTimer;
 @property (nonatomic, strong) NSMenuItem            *previewMenuItem;
 @property (nonatomic, assign) BOOL                   previewVisible;
 @property (nonatomic, assign) CGFloat                previewFontSize;
+@property (nonatomic, assign) CGFloat                previewFraction;   // preview width / window width
 // Syntax highlighting guard
 @property (nonatomic, assign) BOOL                   isHighlighting;
 @end
@@ -344,6 +414,9 @@ static NSString *const kPreviewFontSizeKey     = @"PreviewFontSize";
 static const CGFloat   kPreviewFontSizeDefault = 15.0;
 static const CGFloat   kPreviewFontSizeMin     = 8.0;
 static const CGFloat   kPreviewFontSizeMax     = 72.0;
+static NSString *const kPreviewFractionKey     = @"PreviewSplitFraction";
+static const CGFloat   kPreviewFractionDefault = 0.45;
+static const CGFloat   kMinPaneWidth           = 150.0;
 
 @implementation AppDelegate
 
@@ -356,6 +429,9 @@ static const CGFloat   kPreviewFontSizeMax     = 72.0;
     double savedPreviewSize = [[NSUserDefaults standardUserDefaults] doubleForKey:kPreviewFontSizeKey];
     _previewFontSize    = (savedPreviewSize >= kPreviewFontSizeMin && savedPreviewSize <= kPreviewFontSizeMax)
                               ? savedPreviewSize : kPreviewFontSizeDefault;
+    double savedFraction = [[NSUserDefaults standardUserDefaults] doubleForKey:kPreviewFractionKey];
+    _previewFraction    = (savedFraction > 0.05 && savedFraction < 0.95)
+                              ? savedFraction : kPreviewFractionDefault;
     [self buildMenu];
     [self buildWindow];
     [self.window makeKeyAndOrderFront:nil];
@@ -447,11 +523,11 @@ static const CGFloat   kPreviewFontSizeMax     = 72.0;
     _scrollView.rulersVisible      = YES;
 
     // ── Divider and preview — hidden until toggled ───────
-    _dividerView = [[NSView alloc] initWithFrame:
-                     NSMakeRect(0, kStatusBarHeight, kDividerWidth, editH)];
+    _dividerView = [[SplitDividerView alloc] initWithFrame:
+                     NSMakeRect(0, kStatusBarHeight, kSplitHitWidth, editH)];
     _dividerView.autoresizingMask = NSViewHeightSizable;
-    _dividerView.wantsLayer       = YES;
     _dividerView.hidden           = YES;
+    _dividerView.delegate         = self;
 
     WKWebViewConfiguration *wkConfig = [[WKWebViewConfiguration alloc] init];
     WKUserContentController *ucc = [[WKUserContentController alloc] init];
@@ -464,8 +540,8 @@ static const CGFloat   kPreviewFontSizeMax     = 72.0;
     _previewWebView.hidden           = YES;
 
     [_window.contentView addSubview:_scrollView];
-    [_window.contentView addSubview:_dividerView];
     [_window.contentView addSubview:_previewWebView];
+    [_window.contentView addSubview:_dividerView];   // above the preview so its hit area wins
 
     // ── Status bar ───────────────────────────────────────
     _statusBar = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, cb.size.width, kStatusBarHeight)];
@@ -824,14 +900,38 @@ static const CGFloat   kPreviewFontSizeMax     = 72.0;
     NSRect cb    = _window.contentView.bounds;
     CGFloat editH = cb.size.height - kStatusBarHeight;
     CGFloat total = cb.size.width;
-    CGFloat previewW = floor(total * 0.45);
+    CGFloat previewW = [self clampedPreviewWidth:floor(total * _previewFraction) total:total];
     CGFloat editorW  = total - previewW - kDividerWidth;
 
     _scrollView.frame        = NSMakeRect(0, kStatusBarHeight, editorW, editH);
-    _dividerView.frame       = NSMakeRect(editorW, kStatusBarHeight, kDividerWidth, editH);
+    _dividerView.frame       = NSMakeRect(editorW - kSplitLineOffset, kStatusBarHeight, kSplitHitWidth, editH);
     _previewWebView.frame = NSMakeRect(editorW + kDividerWidth, kStatusBarHeight, previewW, editH);
+}
 
-    _dividerView.layer.backgroundColor = [NSColor separatorColor].CGColor;
+// Keeps both panes at least kMinPaneWidth wide (or 20% each in a narrow window).
+- (CGFloat)clampedPreviewWidth:(CGFloat)previewW total:(CGFloat)total {
+    static const CGFloat kDividerWidth = 1.0;
+    CGFloat usable = total - kDividerWidth;
+    CGFloat minW   = MIN(kMinPaneWidth, floor(usable * 0.2));
+    return MIN(MAX(previewW, minW), usable - minW);
+}
+
+// ── SplitDividerDelegate ──────────────────────────────────
+
+- (void)splitDivider:(SplitDividerView *)divider draggedToX:(CGFloat)lineX {
+    static const CGFloat kDividerWidth = 1.0;
+    CGFloat total = _window.contentView.bounds.size.width;
+    if (total <= 0) return;
+    CGFloat previewW = [self clampedPreviewWidth:floor(total - lineX - kDividerWidth) total:total];
+    _previewFraction = previewW / total;
+    [[NSUserDefaults standardUserDefaults] setDouble:_previewFraction forKey:kPreviewFractionKey];
+    [self applyPreviewLayout];
+}
+
+- (void)splitDividerDoubleClicked:(SplitDividerView *)divider {
+    _previewFraction = kPreviewFractionDefault;
+    [[NSUserDefaults standardUserDefaults] setDouble:_previewFraction forKey:kPreviewFractionKey];
+    [self applyPreviewLayout];
 }
 
 - (void)schedulePreviewUpdate {

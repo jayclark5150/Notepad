@@ -12,6 +12,7 @@ A minimal plain-text editor for macOS (Apple Silicon).
 - Adjustable font size (8–72 pt) and line spacing
 - Markdown syntax highlighting in the editor
 - Live Markdown preview pane (Cmd+Shift+P)
+- Resizable split between editor and preview (drag the divider, double-click to reset), remembered between launches
 - Adjustable preview text size (Cmd+Option+= / Cmd+Option+- / Cmd+Option+0 to reset), remembered between launches
 - Code blocks rendered as rounded rectangles with a one-click Copy button
 - Save-aware close and quit (window and app will not close if a save fails or is cancelled)
