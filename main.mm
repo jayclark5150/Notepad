@@ -410,6 +410,7 @@ static const CGFloat kSplitLineOffset = 1.0;   // line's x within the hit area
 @property (nonatomic, assign) BOOL                   isHighlighting;
 @end
 
+static NSString *gPendingOpenPath = nil;   // file passed in before the window exists
 static NSString *const kPreviewFontSizeKey     = @"PreviewFontSize";
 static const CGFloat   kPreviewFontSizeDefault = 15.0;
 static const CGFloat   kPreviewFontSizeMin     = 8.0;
@@ -443,7 +444,23 @@ static const CGFloat   kMinPaneWidth           = 150.0;
         [NSApp activateIgnoringOtherApps:YES];
 #pragma clang diagnostic pop
     }
+    if (gPendingOpenPath) {
+        NSString *path = gPendingOpenPath; gPendingOpenPath = nil;
+        [self loadFileAtPath:path];
+    }
 }
+
+// Files opened from Finder / Dock / "Open With" arrive here. Without this the app
+// is not NSDocument based and AppKit shows "cannot open files in the Plain Text format".
+- (BOOL)application:(NSApplication *)sender openFile:(NSString *)filename {
+    if (!_textView) {                    // launched by the file, UI not built yet
+        gPendingOpenPath = [filename copy];
+        return YES;
+    }
+    if (_isDirty && ![self confirmDiscardWithAction:@"open another file"]) return NO;
+    return [self loadFileAtPath:filename];
+}
+
 
 - (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)app {
     return YES;

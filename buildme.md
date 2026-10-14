@@ -1,6 +1,6 @@
 # Building Notepad
 
-**Version:** 1.0.6  
+**Version:** 1.0.7  
 **Requires:** macOS 12.0+, Apple Silicon (arm64), Xcode Command Line Tools
 
 ```bash
