@@ -2,14 +2,14 @@
 
 A document editor for macOS — inspired by the clean aesthetic of iA Writer. Open and edit plain text, Markdown, and Word documents in a distraction-free, centered writing environment.
 
-![macOS](https://img.shields.io/badge/macOS-12.0%2B-blue) ![Architecture](https://img.shields.io/badge/arch-arm64-green) ![Version](https://img.shields.io/badge/version-1.3.0-orange)
+![macOS](https://img.shields.io/badge/macOS-12.0%2B-blue) ![Architecture](https://img.shields.io/badge/arch-arm64-green) ![Version](https://img.shields.io/badge/version-1.4.0-orange)
 
 ## Features
 
 ### Document formats
 - **Plain Text** (.txt) — full read/write
 - **Markdown** (.md) — full read/write with live syntax highlighting
-- **Word Document** (.docx) — opens with bold, italic, and heading formatting preserved; saves back to .docx
+- **Word Document** (.docx) — native rich-text editing; bold, italic, underline, strikethrough, alignment, and heading styles preserved on save
 - **Legacy Word** (.doc) — opens as read-only text extraction; use Save As to save as .docx or .txt
 
 ### Editor
@@ -17,24 +17,45 @@ A document editor for macOS — inspired by the clean aesthetic of iA Writer. Op
 - **Centered writing column** — 720 px max-width with generous margins, just like iA Writer
 - **Markdown syntax highlighting** — headers, code blocks, bold, italic, blockquotes with iA Writer accent colors
 - **Edit / Preview toggle** — switch between raw Markdown and rendered preview in the same pane (Cmd+\\)
+- **Formatting toolbar** — Bold, Italic, Underline, Strikethrough, alignment buttons, and Heading Style popup (DOCX mode only)
+- **Typewriter mode** — cursor stays vertically centered as you type (View > Typewriter Mode or Cmd+Shift+T)
+- **Full-screen support** — native macOS full-screen (green traffic-light button or View > Enter Full Screen)
+- **Drag & drop** — drag any supported file onto the window to open it
+- **Open Recent** — File > Open Recent submenu with full history
 - Line number gutter (toggle with Cmd+Shift+L, off by default)
 - Find & Replace (case-insensitive, wrap-around)
-- Font selection: Monospaced, Sans-Serif, Serif
+- Font selection: Monospaced, Sans-Serif, Serif (via Preferences or Format > Show Fonts)
 - Adjustable font size 8–72 pt (Cmd++ / Cmd+-)
 - Adjustable line spacing
+- Spelling & grammar check toggle (Edit menu, persisted across launches)
 - Undo/Redo
 - Unsaved-changes protection on close/quit/new/open
 - UTF-8 with Latin-1 fallback for plain-text files
 - Native file open/save dialogs
 - Open files from Finder, Dock, or "Open With"
+- Window size and position remembered across launches
 - Status bar: format badge, word count, character count, cursor line/column
+
+### Preferences (Cmd+,)
+- Font family (Monospaced / Sans-Serif / Serif)
+- Font size (8–72 pt)
+- Typewriter mode toggle
+- Spelling & grammar toggle
+- All settings persisted via NSUserDefaults
 
 ## Keyboard Shortcuts
 
 | Action | Shortcut |
 |---|---|
 | Toggle Edit / Preview | Cmd+\\ |
+| Preferences | Cmd+, |
+| Print | Cmd+P |
+| Show Fonts panel | Cmd+T |
+| Bold | Cmd+B |
+| Italic | Cmd+I |
+| Underline | Cmd+U |
 | Toggle line numbers | Cmd+Shift+L |
+| Typewriter mode | Cmd+Shift+T |
 | Find & Replace | Cmd+F |
 | Font bigger / smaller | Cmd++ / Cmd+- |
 | Preview bigger / smaller | Cmd+Option+= / Cmd+Option+- |
@@ -42,16 +63,9 @@ A document editor for macOS — inspired by the clean aesthetic of iA Writer. Op
 
 ## How DOCX editing works
 
-When you open a `.docx` file the app converts it to Markdown for editing:
+When you open a `.docx` file the app loads it as native rich text using `NSAttributedString` with `NSOfficeOpenXMLTextDocumentType`. You can edit bold, italic, underline, strikethrough, text alignment, and heading font sizes directly. When you save, the rich text is written back to a valid `.docx` file with all formatting preserved.
 
-| Word formatting | Markdown equivalent |
-|---|---|
-| Heading 1–3 | `# ` … `### ` |
-| **Bold** | `**bold**` |
-| *Italic* | `*italic*` |
-| ***Bold italic*** | `***bold italic***` |
-
-When you save, the Markdown is converted back to a valid `.docx` file with font sizes and traits applied. Complex formatting (tables, images, comments) is not preserved.
+Complex formatting (tables, images, comments) is preserved on round-trip (the app doesn't alter what it doesn't edit). Dark mode automatically adjusts near-black DOCX text colors so they are readable.
 
 ## Build
 

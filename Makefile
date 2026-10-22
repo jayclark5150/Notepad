@@ -62,6 +62,8 @@ $(PLIST): Info.plist | $(BUNDLE)/Contents/MacOS
 
 .PHONY: codesign
 codesign: $(BINARY) $(PLIST)
+	find $(BUNDLE) -name "._*" -delete
+	find $(BUNDLE) -name ".DS_Store" -delete
 	xattr -cr $(BUNDLE)
 	codesign --force --options runtime --entitlements $(ENTITLE) --sign $(SIGN_ID) $(BUNDLE)
 

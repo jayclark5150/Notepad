@@ -9,6 +9,16 @@
 #import <WebKit/WebKit.h>
 
 // ============================================================
+// MARK: - NSUserDefaults Keys
+// ============================================================
+
+static NSString *const kFontFamilyKey      = @"FontFamily";
+static NSString *const kFontSizeKey        = @"FontSize";
+static NSString *const kLineSpacingKey     = @"LineSpacing";
+static NSString *const kTypewriterModeKey  = @"TypewriterMode";
+static NSString *const kSpellCheckKey      = @"SpellChecking";
+
+// ============================================================
 // MARK: - Line Number Ruler View
 // ============================================================
 
@@ -310,10 +320,45 @@ static const CGFloat kRulerWidth = 50.0;
 @end
 
 // ============================================================
+// MARK: - Drop Target View
+// ============================================================
+
+@protocol DropTargetDelegate <NSObject>
+- (BOOL)loadFileAtPath:(NSString *)path;
+@end
+
+@interface DropTargetView : NSView
+@property (nonatomic, weak) id<DropTargetDelegate> dropDelegate;
+@end
+
+@implementation DropTargetView
+- (instancetype)initWithFrame:(NSRect)frame {
+    self = [super initWithFrame:frame];
+    if (self) [self registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
+    return self;
+}
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+    if ([sender.draggingPasteboard canReadObjectForClasses:@[[NSURL class]]
+         options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}])
+        return NSDragOperationCopy;
+    return NSDragOperationNone;
+}
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+    NSArray *urls = [sender.draggingPasteboard readObjectsForClasses:@[[NSURL class]]
+        options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+    if (urls.firstObject) {
+        [_dropDelegate loadFileAtPath:[(NSURL *)urls.firstObject path]];
+        return YES;
+    }
+    return NO;
+}
+@end
+
+// ============================================================
 // MARK: - Application Delegate / Main Editor Window
 // ============================================================
 
-@interface AppDelegate : NSObject <NSApplicationDelegate, NSTextViewDelegate, NSWindowDelegate, WKScriptMessageHandler>
+@interface AppDelegate : NSObject <NSApplicationDelegate, NSTextViewDelegate, NSWindowDelegate, WKScriptMessageHandler, NSToolbarDelegate, NSMenuDelegate, DropTargetDelegate>
 @property (nonatomic, strong) NSWindow              *window;
 @property (nonatomic, strong) NSTextView            *textView;
 @property (nonatomic, strong) NSScrollView          *scrollView;
@@ -334,8 +379,15 @@ static const CGFloat kRulerWidth = 50.0;
 @property (nonatomic, assign) CGFloat                previewFontSize;
 // Format
 @property (nonatomic, copy)   NSString              *fileFormat;        // txt, md, docx, doc
+// Custom text color (nil = use theme default)
+@property (nonatomic, strong) NSColor               *customTextColor;
 // Syntax highlighting guard
 @property (nonatomic, assign) BOOL                   isHighlighting;
+// New features
+@property (nonatomic, assign) BOOL                   typewriterMode;
+@property (nonatomic, strong) NSPopUpButton         *headingStylePopup;
+@property (nonatomic, strong) NSMenu                *recentSubmenu;
+@property (nonatomic, strong) NSPanel               *prefsPanel;
 @end
 
 static NSString *gPendingOpenPath = nil;
@@ -345,6 +397,7 @@ static const CGFloat   kPreviewFontSizeMin     = 8.0;
 static const CGFloat   kPreviewFontSizeMax     = 72.0;
 static const CGFloat   kColumnWidth            = 720.0;
 static const CGFloat   kVInset                 = 24.0;
+static NSString *const kCustomTextColorKey     = @"CustomTextColor";
 
 @implementation AppDelegate
 
@@ -356,11 +409,30 @@ static const CGFloat   kVInset                 = 24.0;
     _currentLineSpacing = 0.0;
     _editMode           = YES;
     _fileFormat         = @"txt";
+    NSData *colorData = [[NSUserDefaults standardUserDefaults] dataForKey:kCustomTextColorKey];
+    if (colorData) {
+        _customTextColor = [NSKeyedUnarchiver unarchivedObjectOfClass:[NSColor class]
+                                                             fromData:colorData error:nil];
+    }
     double savedPreviewSize = [[NSUserDefaults standardUserDefaults] doubleForKey:kPreviewFontSizeKey];
     _previewFontSize    = (savedPreviewSize >= kPreviewFontSizeMin && savedPreviewSize <= kPreviewFontSizeMax)
                               ? savedPreviewSize : kPreviewFontSizeDefault;
+
+    // Load persisted preferences
+    NSString *savedFamily = [[NSUserDefaults standardUserDefaults] stringForKey:kFontFamilyKey];
+    if (savedFamily) _fontFamily = savedFamily;
+    double savedSize = [[NSUserDefaults standardUserDefaults] doubleForKey:kFontSizeKey];
+    if (savedSize >= 8 && savedSize <= 72) _currentFontSize = savedSize;
+    double savedSpacing = [[NSUserDefaults standardUserDefaults] doubleForKey:kLineSpacingKey];
+    if (savedSpacing >= 0) _currentLineSpacing = savedSpacing;
+    _typewriterMode = [[NSUserDefaults standardUserDefaults] boolForKey:kTypewriterModeKey];
+
     [self buildMenu];
     [self buildWindow];
+
+    // Apply spell check pref after textView is created
+    _textView.continuousSpellCheckingEnabled = [[NSUserDefaults standardUserDefaults] boolForKey:kSpellCheckKey];
+
     [self.window makeKeyAndOrderFront:nil];
     if (@available(macOS 14.0, *)) {
         [NSApp activate];
@@ -412,7 +484,7 @@ static const CGFloat   kVInset                 = 24.0;
 // ── Window & Views ────────────────────────────────────────
 
 - (void)buildWindow {
-    NSRect frame = NSMakeRect(0, 0, 1100, 700);
+    NSRect frame = NSMakeRect(0, 0, 820, 700);
     _window = [[NSWindow alloc] initWithContentRect:frame
                                           styleMask:NSWindowStyleMaskTitled
                                                    | NSWindowStyleMaskResizable
@@ -423,6 +495,16 @@ static const CGFloat   kVInset                 = 24.0;
     _window.title    = @"Untitled — Notepad";
     _window.delegate = self;
     [_window center];
+
+    // Full-screen support + frame persistence
+    _window.collectionBehavior |= NSWindowCollectionBehaviorFullScreenPrimary;
+    [_window setFrameAutosaveName:@"MainWindow"];
+
+    // Set up drop target as content view
+    DropTargetView *dropView = [[DropTargetView alloc] initWithFrame:_window.contentView.frame];
+    dropView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    dropView.dropDelegate = self;
+    _window.contentView = dropView;
 
     static const CGFloat kStatusBarHeight = 22.0;
     NSRect cb = _window.contentView.bounds;
@@ -508,9 +590,100 @@ static const CGFloat   kVInset                 = 24.0;
 
     _findReplace = [[FindReplaceController alloc] initWithTargetTextView:_textView];
     [self updateStatusBar];
+
+    // Set up NSToolbar
+    [self setupToolbar];
+}
+
+// ── Toolbar ───────────────────────────────────────────────
+
+- (void)setupToolbar {
+    NSToolbar *tb = [[NSToolbar alloc] initWithIdentifier:@"MainToolbar"];
+    tb.delegate = self;
+    tb.allowsUserCustomization = NO;
+    tb.displayMode = NSToolbarDisplayModeIconOnly;
+    _window.toolbar = tb;
+}
+
+// NSToolbarDelegate
+
+- (NSArray<NSToolbarItemIdentifier> *)toolbarAllowedItemIdentifiers:(NSToolbar *)toolbar {
+    return @[@"Bold", @"Italic", @"Underline", @"Strikethrough",
+             NSToolbarSpaceItemIdentifier,
+             @"AlignLeft", @"AlignCenter", @"AlignRight",
+             NSToolbarFlexibleSpaceItemIdentifier,
+             @"HeadingStyle"];
+}
+
+- (NSArray<NSToolbarItemIdentifier> *)toolbarDefaultItemIdentifiers:(NSToolbar *)toolbar {
+    return [self toolbarAllowedItemIdentifiers:toolbar];
+}
+
+- (NSToolbarItem *)toolbar:(NSToolbar *)toolbar
+     itemForItemIdentifier:(NSToolbarItemIdentifier)ident
+ willBeInsertedIntoToolbar:(BOOL)flag {
+    NSToolbarItem *item = [[NSToolbarItem alloc] initWithItemIdentifier:ident];
+    if ([ident isEqualToString:@"Bold"]) {
+        item.image = [NSImage imageWithSystemSymbolName:@"bold" accessibilityDescription:@"Bold"];
+        item.label = @"Bold"; item.action = @selector(toggleBoldface:); item.target = nil;
+        item.toolTip = @"Bold (⌘B)";
+    } else if ([ident isEqualToString:@"Italic"]) {
+        item.image = [NSImage imageWithSystemSymbolName:@"italic" accessibilityDescription:@"Italic"];
+        item.label = @"Italic"; item.action = @selector(toggleItalic:); item.target = nil;
+    } else if ([ident isEqualToString:@"Underline"]) {
+        item.image = [NSImage imageWithSystemSymbolName:@"underline" accessibilityDescription:@"Underline"];
+        item.label = @"Underline"; item.action = @selector(toggleUnderline:); item.target = nil;
+    } else if ([ident isEqualToString:@"Strikethrough"]) {
+        item.image = [NSImage imageWithSystemSymbolName:@"strikethrough" accessibilityDescription:@"Strikethrough"];
+        item.label = @"Strike"; item.action = @selector(toggleStrikethrough:); item.target = nil;
+    } else if ([ident isEqualToString:@"AlignLeft"]) {
+        item.image = [NSImage imageWithSystemSymbolName:@"text.alignleft" accessibilityDescription:@"Left"];
+        item.label = @"Left"; item.action = @selector(alignLeft:); item.target = nil;
+    } else if ([ident isEqualToString:@"AlignCenter"]) {
+        item.image = [NSImage imageWithSystemSymbolName:@"text.aligncenter" accessibilityDescription:@"Center"];
+        item.label = @"Center"; item.action = @selector(alignCenter:); item.target = nil;
+    } else if ([ident isEqualToString:@"AlignRight"]) {
+        item.image = [NSImage imageWithSystemSymbolName:@"text.alignright" accessibilityDescription:@"Right"];
+        item.label = @"Right"; item.action = @selector(alignRight:); item.target = nil;
+    } else if ([ident isEqualToString:@"HeadingStyle"]) {
+        _headingStylePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(0,0,130,24) pullsDown:NO];
+        NSArray *titles = @[@"Normal", @"Heading 1", @"Heading 2", @"Heading 3", @"Heading 4", @"Heading 5", @"Heading 6"];
+        for (NSUInteger i = 0; i < titles.count; i++) {
+            [_headingStylePopup addItemWithTitle:titles[i]];
+            [_headingStylePopup itemAtIndex:i].tag = (NSInteger)i;
+        }
+        _headingStylePopup.target = self;
+        _headingStylePopup.action = @selector(headingPopupChanged:);
+        item.view = _headingStylePopup;
+        item.label = @"Style";
+        item.minSize = NSMakeSize(130, 24);
+        item.maxSize = NSMakeSize(130, 24);
+    }
+    return item;
+}
+
+- (BOOL)validateToolbarItem:(NSToolbarItem *)item {
+    if ([item.itemIdentifier isEqualToString:@"HeadingStyle"])
+        return [self isRichTextMode] && _editMode;
+    return [self isRichTextMode] && _editMode;
+}
+
+- (IBAction)headingPopupChanged:(id)sender {
+    NSInteger level = [_headingStylePopup selectedItem].tag;
+    NSRange sel = _textView.selectedRange;
+    NSRange paraRange = [_textView.string paragraphRangeForRange:sel];
+    static CGFloat sizes[] = {0, 28, 22, 18, 14, 13, 12};
+    NSFont *font = (level == 0) ? [self currentFont] : [NSFont boldSystemFontOfSize:sizes[level]];
+    [_textView.textStorage addAttribute:NSFontAttributeName value:font range:paraRange];
+    _isDirty = YES;
+    [self updateTitle];
 }
 
 // ── Theme ──────────────────────────────────────────────────
+
+- (BOOL)isRichTextMode {
+    return [_fileFormat isEqualToString:@"docx"] || [_fileFormat isEqualToString:@"doc"];
+}
 
 - (BOOL)isDarkMode {
     NSAppearanceName matched = [_window.effectiveAppearance
@@ -521,10 +694,11 @@ static const CGFloat   kVInset                 = 24.0;
 - (NSColor *)iaBgColor {
     return [self isDarkMode]
         ? [NSColor colorWithRed:0x1A/255.0 green:0x1A/255.0 blue:0x1A/255.0 alpha:1.0]
-        : [NSColor colorWithRed:0xF2/255.0 green:0xF1/255.0 blue:0xEF/255.0 alpha:1.0];
+        : [NSColor whiteColor];
 }
 
 - (NSColor *)iaTextColor {
+    if (_customTextColor) return _customTextColor;
     return [self isDarkMode]
         ? [NSColor colorWithRed:0xD7/255.0 green:0xD5/255.0 blue:0xCF/255.0 alpha:1.0]
         : [NSColor colorWithRed:0x1A/255.0 green:0x1A/255.0 blue:0x1A/255.0 alpha:1.0];
@@ -545,18 +719,22 @@ static const CGFloat   kVInset                 = 24.0;
 - (void)applyIAWriterTheme {
     NSColor *bg   = [self iaBgColor];
     NSColor *text = [self iaTextColor];
-    _textView.backgroundColor  = bg;
-    _textView.textColor        = text;
+    _textView.backgroundColor     = bg;
     _textView.insertionPointColor = text;
-    _scrollView.backgroundColor = bg;
-    _window.backgroundColor    = bg;
+    _scrollView.backgroundColor   = bg;
+    _window.backgroundColor       = bg;
     NSMutableParagraphStyle *para = [[NSMutableParagraphStyle alloc] init];
     para.lineSpacing = _currentLineSpacing;
-    _textView.typingAttributes = @{
+    NSDictionary *typingAttrs = @{
         NSFontAttributeName            : [self currentFont],
         NSForegroundColorAttributeName : text,
         NSParagraphStyleAttributeName  : para,
     };
+    _textView.typingAttributes = typingAttrs;
+    // Only force text color in plain-text mode; rich text carries its own colours
+    if (![self isRichTextMode]) {
+        _textView.textColor = text;
+    }
 }
 
 // ── Centered Column ────────────────────────────────────────
@@ -580,6 +758,9 @@ static const CGFloat   kVInset                 = 24.0;
                        action:@selector(orderFrontStandardAboutPanel:)
                 keyEquivalent:@""];
     [appMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *prefsItem = [appMenu addItemWithTitle:@"Preferences…" action:@selector(showPreferences:) keyEquivalent:@","];
+    prefsItem.target = self;
+    [appMenu addItem:[NSMenuItem separatorItem]];
     [appMenu addItemWithTitle:@"Quit Notepad" action:@selector(terminate:) keyEquivalent:@"q"];
     appItem.submenu = appMenu;
 
@@ -594,6 +775,14 @@ static const CGFloat   kVInset                 = 24.0;
                                              action:@selector(saveDocumentAs:)
                                       keyEquivalent:@"s"];
     saveAs.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    [fileMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *printItem = [fileMenu addItemWithTitle:@"Print…" action:@selector(printDocument:) keyEquivalent:@"p"];
+    printItem.target = self;
+    [fileMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *recentItem = [fileMenu addItemWithTitle:@"Open Recent" action:nil keyEquivalent:@""];
+    _recentSubmenu = [[NSMenu alloc] initWithTitle:@"Open Recent"];
+    _recentSubmenu.delegate = self;
+    recentItem.submenu = _recentSubmenu;
     fileItem.submenu = fileMenu;
 
     // Edit menu
@@ -611,11 +800,52 @@ static const CGFloat   kVInset                 = 24.0;
                                                action:@selector(showFindReplace:)
                                         keyEquivalent:@"f"];
     findItem.target = self;
+    [editMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *spellItem = [editMenu addItemWithTitle:@"Check Spelling While Typing"
+                                               action:@selector(toggleSpellChecking:)
+                                        keyEquivalent:@""];
+    spellItem.target = self;
     editItem.submenu = editMenu;
 
     // Format menu
     NSMenuItem *formatItem = [main addItemWithTitle:@"Format" action:nil keyEquivalent:@""];
     NSMenu *formatMenu = [[NSMenu alloc] initWithTitle:@"Format"];
+
+    // Inline formatting at top
+    NSMenuItem *boldFmt = [formatMenu addItemWithTitle:@"Bold" action:@selector(toggleBoldface:) keyEquivalent:@"b"];
+    boldFmt.target = nil;
+    NSMenuItem *italicFmt = [formatMenu addItemWithTitle:@"Italic" action:@selector(toggleItalic:) keyEquivalent:@"i"];
+    italicFmt.target = nil;
+    NSMenuItem *underlineFmt = [formatMenu addItemWithTitle:@"Underline" action:@selector(toggleUnderline:) keyEquivalent:@"u"];
+    underlineFmt.target = nil;
+    NSMenuItem *strikeFmt = [formatMenu addItemWithTitle:@"Strikethrough" action:@selector(toggleStrikethrough:) keyEquivalent:@""];
+    strikeFmt.target = nil;
+    [formatMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *alignLeftFmt = [formatMenu addItemWithTitle:@"Align Left" action:@selector(alignLeft:) keyEquivalent:@""];
+    alignLeftFmt.target = nil;
+    NSMenuItem *alignCenterFmt = [formatMenu addItemWithTitle:@"Align Center" action:@selector(alignCenter:) keyEquivalent:@""];
+    alignCenterFmt.target = nil;
+    NSMenuItem *alignRightFmt = [formatMenu addItemWithTitle:@"Align Right" action:@selector(alignRight:) keyEquivalent:@""];
+    alignRightFmt.target = nil;
+    [formatMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *fontPanelItem = [formatMenu addItemWithTitle:@"Show Fonts…" action:@selector(orderFrontFontPanel:) keyEquivalent:@"t"];
+    fontPanelItem.target = nil;
+    [formatMenu addItem:[NSMenuItem separatorItem]];
+
+    NSMenuItem *styleItem = [formatMenu addItemWithTitle:@"Paragraph Style" action:nil keyEquivalent:@""];
+    NSMenu *styleMenu = [[NSMenu alloc] initWithTitle:@"Paragraph Style"];
+    NSArray *styleNames = @[@"Normal Text", @"Heading 1", @"Heading 2",
+                            @"Heading 3", @"Heading 4", @"Heading 5", @"Heading 6"];
+    for (NSUInteger i = 0; i < styleNames.count; i++) {
+        NSMenuItem *si = [styleMenu addItemWithTitle:styleNames[i]
+                                             action:@selector(applyParagraphStyle:)
+                                      keyEquivalent:@""];
+        si.tag    = (NSInteger)i;
+        si.target = self;
+    }
+    styleItem.submenu = styleMenu;
+
+    [formatMenu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *familyItem = [formatMenu addItemWithTitle:@"Font" action:nil keyEquivalent:@""];
     NSMenu *familyMenu = [[NSMenu alloc] initWithTitle:@"Font"];
@@ -671,6 +901,17 @@ static const CGFloat   kVInset                 = 24.0;
         it.target = self;
     }
     spacingItem.submenu = spacingMenu;
+
+    [formatMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *colorItem = [formatMenu addItemWithTitle:@"Text Color…"
+                                                  action:@selector(showTextColorPicker:)
+                                           keyEquivalent:@""];
+    colorItem.target = self;
+    NSMenuItem *resetColorItem = [formatMenu addItemWithTitle:@"Reset Text Color"
+                                                       action:@selector(resetTextColor:)
+                                                keyEquivalent:@""];
+    resetColorItem.target = self;
+
     formatItem.submenu = formatMenu;
 
     // View menu
@@ -682,6 +923,12 @@ static const CGFloat   kVInset                 = 24.0;
                                            keyEquivalent:@"l"];
     lineNumItem.target = self;
     lineNumItem.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+
+    NSMenuItem *twItem = [viewMenu addItemWithTitle:@"Typewriter Mode"
+                                             action:@selector(toggleTypewriterMode:)
+                                      keyEquivalent:@"t"];
+    twItem.target = self;
+    twItem.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
 
     [viewMenu addItem:[NSMenuItem separatorItem]];
 
@@ -708,6 +955,37 @@ static const CGFloat   kVInset                 = 24.0;
 
     viewItem.submenu = viewMenu;
     (void)findItem;
+    (void)boldFmt; (void)italicFmt; (void)underlineFmt; (void)strikeFmt;
+    (void)alignLeftFmt; (void)alignCenterFmt; (void)alignRightFmt;
+    (void)fontPanelItem;
+}
+
+// ── NSMenuDelegate (Open Recent) ──────────────────────────
+
+- (void)menuNeedsUpdate:(NSMenu *)menu {
+    if (menu != _recentSubmenu) return;
+    [menu removeAllItems];
+    NSArray<NSURL *> *recent = [[NSDocumentController sharedDocumentController] recentDocumentURLs];
+    for (NSURL *url in recent) {
+        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:url.lastPathComponent
+                                                     action:@selector(openRecentFile:)
+                                              keyEquivalent:@""];
+        item.representedObject = url;
+        item.target = self;
+        [menu addItem:item];
+    }
+    if (recent.count > 0) [menu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *clear = [[NSMenuItem alloc] initWithTitle:@"Clear Menu"
+                                                   action:@selector(clearRecentDocuments:)
+                                            keyEquivalent:@""];
+    clear.target = [NSDocumentController sharedDocumentController];
+    [menu addItem:clear];
+}
+
+- (IBAction)openRecentFile:(id)sender {
+    NSURL *url = [(NSMenuItem *)sender representedObject];
+    if (_isDirty && ![self confirmDiscardWithAction:@"open another file"]) return;
+    [self loadFileAtPath:url.path];
 }
 
 // ── NSTextViewDelegate ────────────────────────────────────
@@ -719,14 +997,29 @@ static const CGFloat   kVInset                 = 24.0;
     }
     [_rulerView setNeedsDisplay:YES];
     [self updateStatusBar];
-    if (!_isHighlighting) {
+    if (!_isHighlighting && ![self isRichTextMode]) {
         [self applyMarkdownHighlighting];
     }
     [self schedulePreviewUpdate];
+    if (_typewriterMode && _editMode) [self scrollCursorToCenter];
 }
 
 - (void)textViewDidChangeSelection:(NSNotification *)note {
     [self updateStatusBar];
+    if (_headingStylePopup && [self isRichTextMode] && _editMode) {
+        NSUInteger pos = _textView.selectedRange.location;
+        if (pos < _textView.textStorage.length || pos == 0) {
+            NSUInteger safePos = MIN(pos, _textView.textStorage.length > 0 ? _textView.textStorage.length - 1 : 0);
+            NSFont *font = [_textView.textStorage attribute:NSFontAttributeName atIndex:safePos effectiveRange:nil];
+            CGFloat sz = font ? font.pointSize : 12.0;
+            NSInteger tag = 0;
+            if (sz >= 24) tag = 1;
+            else if (sz >= 19) tag = 2;
+            else if (sz >= 16) tag = 3;
+            else if (sz >= 13) tag = 4;
+            [_headingStylePopup selectItemWithTag:tag];
+        }
+    }
 }
 
 // ── Actions ───────────────────────────────────────────────
@@ -736,9 +1029,11 @@ static const CGFloat   kVInset                 = 24.0;
     _currentFilePath = nil;
     _fileFormat      = @"txt";
     _isDirty = NO;
+    _textView.richText = NO;
     [_textView.textStorage replaceCharactersInRange:NSMakeRange(0, _textView.string.length)
                                          withString:@""];
     [_textView.undoManager removeAllActions];
+    [self applyIAWriterTheme];
     [self updateTitle];
     [self updateStatusBar];
 }
@@ -759,61 +1054,64 @@ static const CGFloat   kVInset                 = 24.0;
     }
 
     NSString *ext  = path.pathExtension.lowercaseString;
-    NSString *text = nil;
     NSError  *err  = nil;
 
-    if ([ext isEqualToString:@"docx"]) {
-        _fileFormat = @"docx";
-        NSURL *url = [NSURL fileURLWithPath:path];
+    if ([ext isEqualToString:@"docx"] || [ext isEqualToString:@"doc"]) {
+        _fileFormat = ext;
+        NSURL *url  = [NSURL fileURLWithPath:path];
+        NSString *docType = [ext isEqualToString:@"docx"]
+            ? NSOfficeOpenXMLTextDocumentType
+            : NSDocFormatTextDocumentType;
         NSDictionary *docAttrs = nil;
         NSAttributedString *attrStr = [[NSAttributedString alloc]
             initWithURL:url
-                options:@{NSDocumentTypeDocumentAttribute: NSOfficeOpenXMLTextDocumentType}
+                options:@{NSDocumentTypeDocumentAttribute: docType}
      documentAttributes:&docAttrs
                   error:&err];
-        if (attrStr && !err) {
-            text = [self attributedStringToMarkdown:attrStr];
+        if (err || !attrStr) {
+            [self showError:[NSString stringWithFormat:@"Could not open file:\n%@",
+                err.localizedDescription ?: @"Unknown error"]];
+            return NO;
         }
-    } else if ([ext isEqualToString:@"doc"]) {
-        _fileFormat = @"doc";
-        NSURL *url = [NSURL fileURLWithPath:path];
-        NSDictionary *docAttrs = nil;
-        NSAttributedString *attrStr = [[NSAttributedString alloc]
-            initWithURL:url
-                options:@{NSDocumentTypeDocumentAttribute: NSDocFormatTextDocumentType}
-     documentAttributes:&docAttrs
-                  error:&err];
-        if (attrStr && !err) {
-            text = attrStr.string;
-        }
-    } else {
-        _fileFormat = ([ext isEqualToString:@"md"] || [ext isEqualToString:@"markdown"]) ? @"md" : @"txt";
-        text = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:&err];
-        if (err) {
-            text = nil; err = nil;
-            text = [NSString stringWithContentsOfFile:path encoding:NSISOLatin1StringEncoding error:&err];
-        }
+        _textView.richText = YES;
+        [_textView.textStorage setAttributedString:attrStr];
+        [_textView.undoManager removeAllActions];
+        _currentFilePath = path;
+        _isDirty = NO;
+        [self applyIAWriterTheme];
+        [self fixDocxColorsForDarkMode];
+        [self updateTitle];
+        [self updateStatusBar];
+        [[NSDocumentController sharedDocumentController] noteNewRecentDocumentURL:[NSURL fileURLWithPath:path]];
+        return YES;
     }
 
+    // Plain text / Markdown
+    _fileFormat = ([ext isEqualToString:@"md"] || [ext isEqualToString:@"markdown"]) ? @"md" : @"txt";
+    NSString *text = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:&err];
+    if (err) {
+        text = nil; err = nil;
+        text = [NSString stringWithContentsOfFile:path encoding:NSISOLatin1StringEncoding error:&err];
+    }
     if (err || !text) {
         [self showError:[NSString stringWithFormat:@"Could not open file:\n%@",
             err.localizedDescription ?: @"Unknown error"]];
         return NO;
     }
-
-    // Normalize line endings
     text = [text stringByReplacingOccurrencesOfString:@"\r\n" withString:@"\n"];
     text = [text stringByReplacingOccurrencesOfString:@"\r"   withString:@"\n"];
 
+    _textView.richText = NO;
     [_textView.textStorage replaceCharactersInRange:NSMakeRange(0, _textView.string.length)
                                          withString:text];
     [_textView.undoManager removeAllActions];
     _currentFilePath = path;
     _isDirty = NO;
-    [self updateTitle];
-    [self updateStatusBar];
     [self applyFont];
     [self schedulePreviewUpdate];
+    [self updateTitle];
+    [self updateStatusBar];
+    [[NSDocumentController sharedDocumentController] noteNewRecentDocumentURL:[NSURL fileURLWithPath:path]];
     return YES;
 }
 
@@ -884,7 +1182,12 @@ static const CGFloat   kVInset                 = 24.0;
     }
 
     if ([_fileFormat isEqualToString:@"docx"]) {
-        NSMutableAttributedString *attrStr = [self markdownToAttributedString:_textView.string];
+        // Rich-text mode: save attributed string directly.
+        // Plain-text mode (e.g. TXT saved-as DOCX): wrap in a body-font attributed string.
+        NSAttributedString *attrStr = [self isRichTextMode]
+            ? _textView.textStorage
+            : [[NSAttributedString alloc] initWithString:_textView.string
+                                              attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12]}];
         NSError *err = nil;
         NSData *data = [attrStr dataFromRange:NSMakeRange(0, attrStr.length)
                            documentAttributes:@{NSDocumentTypeDocumentAttribute: NSOfficeOpenXMLTextDocumentType}
@@ -935,9 +1238,150 @@ static const CGFloat   kVInset                 = 24.0;
     [_findReplace showPanel];
 }
 
-// ── DOCX Conversion ───────────────────────────────────────
+// ── Dark Mode DOCX Color Fix ──────────────────────────────
 
-- (NSString *)attributedStringToMarkdown:(NSAttributedString *)attrStr {
+- (void)fixDocxColorsForDarkMode {
+    if (![self isDarkMode]) return;
+    NSColor *light = [self iaTextColor];
+    NSTextStorage *ts = _textView.textStorage;
+    [ts beginEditing];
+    [ts enumerateAttribute:NSForegroundColorAttributeName inRange:NSMakeRange(0, ts.length)
+                   options:0 usingBlock:^(id val, NSRange r, BOOL *stop) {
+        (void)stop;
+        if (!val) return;
+        NSColor *c = [(NSColor *)val colorUsingColorSpace:[NSColorSpace deviceRGBColorSpace]];
+        if (c && c.redComponent < 0.25 && c.greenComponent < 0.25 && c.blueComponent < 0.25)
+            [ts addAttribute:NSForegroundColorAttributeName value:light range:r];
+    }];
+    [ts endEditing];
+}
+
+// ── Print ────────────────────────────────────────────────
+
+- (IBAction)printDocument:(id)sender {
+    NSPrintOperation *op = [NSPrintOperation printOperationWithView:_textView];
+    [op runOperationModalForWindow:_window delegate:nil didRunSelector:nil contextInfo:nil];
+}
+
+// ── Spell Checking ────────────────────────────────────────
+
+- (IBAction)toggleSpellChecking:(id)sender {
+    BOOL on = !_textView.continuousSpellCheckingEnabled;
+    _textView.continuousSpellCheckingEnabled = on;
+    [[NSUserDefaults standardUserDefaults] setBool:on forKey:kSpellCheckKey];
+}
+
+// ── Typewriter Mode ───────────────────────────────────────
+
+- (IBAction)toggleTypewriterMode:(id)sender {
+    _typewriterMode = !_typewriterMode;
+    [[NSUserDefaults standardUserDefaults] setBool:_typewriterMode forKey:kTypewriterModeKey];
+}
+
+- (void)scrollCursorToCenter {
+    NSRange sel = _textView.selectedRange;
+    if (sel.location == NSNotFound) return;
+    NSRange glyphRange = [_textView.layoutManager glyphRangeForCharacterRange:NSMakeRange(sel.location, 0)
+                                                         actualCharacterRange:nil];
+    NSRect lineRect = [_textView.layoutManager lineFragmentRectForGlyphAtIndex:glyphRange.location effectiveRange:nil];
+    CGFloat cursorY = lineRect.origin.y + _textView.textContainerInset.height;
+    CGFloat viewH = _scrollView.contentSize.height;
+    CGFloat targetY = MAX(0, cursorY - viewH / 2.0);
+    [_scrollView.contentView scrollToPoint:NSMakePoint(0, targetY)];
+    [_scrollView reflectScrolledClipView:_scrollView.contentView];
+}
+
+// ── Preferences Window ────────────────────────────────────
+
+- (IBAction)showPreferences:(id)sender {
+    if (_prefsPanel) { [_prefsPanel makeKeyAndOrderFront:nil]; return; }
+    _prefsPanel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,300,220)
+                                             styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable
+                                               backing:NSBackingStoreBuffered defer:NO];
+    _prefsPanel.title = @"Preferences";
+    [_prefsPanel center];
+    NSView *cv = _prefsPanel.contentView;
+
+    // Font Family
+    NSTextField *famLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(20, 172, 100, 20)];
+    famLabel.stringValue = @"Font Family:"; famLabel.editable = NO; famLabel.bordered = NO;
+    famLabel.backgroundColor = [NSColor clearColor];
+    [cv addSubview:famLabel];
+    NSPopUpButton *famPop = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(120, 168, 160, 26)];
+    [famPop addItemsWithTitles:@[@"Monospaced", @"Sans-Serif", @"Serif"]];
+    [famPop selectItemWithTitle:[_fontFamily isEqualToString:@"sans"] ? @"Sans-Serif" :
+                                 [_fontFamily isEqualToString:@"serif"] ? @"Serif" : @"Monospaced"];
+    famPop.target = self; famPop.action = @selector(prefsFontFamilyChanged:);
+    [cv addSubview:famPop];
+
+    // Font Size
+    NSTextField *szLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(20, 132, 100, 20)];
+    szLabel.stringValue = @"Font Size:"; szLabel.editable = NO; szLabel.bordered = NO;
+    szLabel.backgroundColor = [NSColor clearColor];
+    [cv addSubview:szLabel];
+    NSTextField *szField = [[NSTextField alloc] initWithFrame:NSMakeRect(120, 130, 60, 24)];
+    szField.doubleValue = _currentFontSize; szField.tag = 101;
+    szField.target = self; szField.action = @selector(prefsFontSizeChanged:);
+    [cv addSubview:szField];
+    NSStepper *szStep = [[NSStepper alloc] initWithFrame:NSMakeRect(184, 130, 19, 24)];
+    szStep.minValue = 8; szStep.maxValue = 72; szStep.increment = 1;
+    szStep.doubleValue = _currentFontSize; szStep.tag = 102;
+    szStep.target = self; szStep.action = @selector(prefsFontSizeChanged:);
+    [cv addSubview:szStep];
+
+    // Typewriter
+    NSButton *twCheck = [[NSButton alloc] initWithFrame:NSMakeRect(20, 92, 260, 22)];
+    [twCheck setButtonType:NSButtonTypeSwitch];
+    twCheck.title = @"Typewriter Mode"; twCheck.state = _typewriterMode ? NSControlStateValueOn : NSControlStateValueOff;
+    twCheck.target = self; twCheck.action = @selector(prefsTypewriterChanged:);
+    [cv addSubview:twCheck];
+
+    // Spell check
+    NSButton *spCheck = [[NSButton alloc] initWithFrame:NSMakeRect(20, 60, 260, 22)];
+    [spCheck setButtonType:NSButtonTypeSwitch];
+    spCheck.title = @"Check Spelling While Typing";
+    spCheck.state = _textView.continuousSpellCheckingEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+    spCheck.target = self; spCheck.action = @selector(prefsSpellChanged:);
+    [cv addSubview:spCheck];
+
+    [_prefsPanel makeKeyAndOrderFront:nil];
+}
+
+- (IBAction)prefsFontFamilyChanged:(id)sender {
+    NSPopUpButton *pop = (NSPopUpButton *)sender;
+    NSString *title = pop.titleOfSelectedItem;
+    if ([title isEqualToString:@"Sans-Serif"]) _fontFamily = @"sans";
+    else if ([title isEqualToString:@"Serif"])  _fontFamily = @"serif";
+    else                                         _fontFamily = @"mono";
+    [self applyFont];
+}
+
+- (IBAction)prefsFontSizeChanged:(id)sender {
+    NSView *cv = _prefsPanel.contentView;
+    NSTextField *field = (NSTextField *)[cv viewWithTag:101];
+    NSStepper  *step  = (NSStepper *)[cv viewWithTag:102];
+    if ([sender isKindOfClass:[NSStepper class]])
+        field.doubleValue = step.doubleValue;
+    else
+        step.doubleValue = field.doubleValue;
+    _currentFontSize = MAX(8, MIN(72, field.doubleValue));
+    [self applyFont];
+}
+
+- (IBAction)prefsTypewriterChanged:(id)sender {
+    _typewriterMode = ([(NSButton *)sender state] == NSControlStateValueOn);
+    [[NSUserDefaults standardUserDefaults] setBool:_typewriterMode forKey:kTypewriterModeKey];
+}
+
+- (IBAction)prefsSpellChanged:(id)sender {
+    BOOL on = ([(NSButton *)sender state] == NSControlStateValueOn);
+    _textView.continuousSpellCheckingEnabled = on;
+    [[NSUserDefaults standardUserDefaults] setBool:on forKey:kSpellCheckKey];
+}
+
+// ── (DOCX conversion methods removed — now using NSAttributedString natively) ──
+
+- (NSString *)attributedStringToMarkdown_unused:(NSAttributedString *)attrStr {
     NSMutableString *md  = [NSMutableString string];
     NSString        *str = attrStr.string;
     NSUInteger       len = str.length;
@@ -996,7 +1440,7 @@ static const CGFloat   kVInset                 = 24.0;
     return [md copy];
 }
 
-- (NSMutableAttributedString *)markdownToAttributedString:(NSString *)markdown {
+- (NSMutableAttributedString *)markdownToAttributedString_unused:(NSString *)markdown {
     NSMutableAttributedString *result = [[NSMutableAttributedString alloc] init];
     NSFont *bodyFont = [NSFont systemFontOfSize:12.0 weight:NSFontWeightRegular];
 
@@ -1026,7 +1470,7 @@ static const CGFloat   kVInset                 = 24.0;
             NSString *content = line;
             if ([line hasPrefix:@"- "] || [line hasPrefix:@"* "] || [line hasPrefix:@"+ "])
                 content = [line substringFromIndex:2];
-            paraAS = [self parseMarkdownInline:[content stringByAppendingString:sep]
+            paraAS = [self parseMarkdownInline_unused:[content stringByAppendingString:sep]
                                       baseFont:bodyFont];
         }
         [result appendAttributedString:paraAS];
@@ -1034,7 +1478,7 @@ static const CGFloat   kVInset                 = 24.0;
     return result;
 }
 
-- (NSMutableAttributedString *)parseMarkdownInline:(NSString *)text baseFont:(NSFont *)base {
+- (NSMutableAttributedString *)parseMarkdownInline_unused:(NSString *)text baseFont:(NSFont *)base {
     NSMutableAttributedString *result = [[NSMutableAttributedString alloc] init];
     NSFontManager *fm = [NSFontManager sharedFontManager];
     NSFont *boldFont   = [fm convertFont:base toHaveTrait:NSBoldFontMask];
@@ -1055,7 +1499,7 @@ static const CGFloat   kVInset                 = 24.0;
                 if (closeRange.location != NSNotFound) {
                     NSString *inner = [text substringWithRange:
                         NSMakeRange(pos + 3, closeRange.location - pos - 3)];
-                    [result appendAttributedString:[self parseMarkdownInline:inner baseFont:bItalic]];
+                    [result appendAttributedString:[self parseMarkdownInline_unused:inner baseFont:bItalic]];
                     pos = closeRange.location + 3;
                     continue;
                 }
@@ -1065,7 +1509,7 @@ static const CGFloat   kVInset                 = 24.0;
                 if (closeRange.location != NSNotFound) {
                     NSString *inner = [text substringWithRange:
                         NSMakeRange(pos + 2, closeRange.location - pos - 2)];
-                    [result appendAttributedString:[self parseMarkdownInline:inner baseFont:boldFont]];
+                    [result appendAttributedString:[self parseMarkdownInline_unused:inner baseFont:boldFont]];
                     pos = closeRange.location + 2;
                     continue;
                 }
@@ -1083,7 +1527,7 @@ static const CGFloat   kVInset                 = 24.0;
                 if (closeRange.location != NSNotFound) {
                     NSString *inner = [text substringWithRange:
                         NSMakeRange(pos + 1, closeRange.location - pos - 1)];
-                    [result appendAttributedString:[self parseMarkdownInline:inner baseFont:italicFont]];
+                    [result appendAttributedString:[self parseMarkdownInline_unused:inner baseFont:italicFont]];
                     pos = closeRange.location + 1;
                     continue;
                 }
@@ -1118,11 +1562,11 @@ static const CGFloat   kVInset                 = 24.0;
 }
 
 - (void)updatePreview {
-    if (_editMode) return;
+    if (_editMode || [self isRichTextMode]) return;
 
     BOOL dark = [self isDarkMode];
     NSString *fg           = dark ? @"#D7D5CF" : @"#1A1A1A";
-    NSString *bg           = dark ? @"#1A1A1A" : @"#F2F1EF";
+    NSString *bg           = dark ? @"#1A1A1A" : @"#FFFFFF";
     NSString *headingColor = dark ? @"#7FBBE0" : @"#2458A5";
     NSString *codeBg       = dark ? @"#242424" : @"#E8E6E3";
     NSString *codeFg       = dark ? @"#E8A857" : @"#A0522D";
@@ -1490,6 +1934,7 @@ static const CGFloat   kVInset                 = 24.0;
 // ── Markdown Syntax Highlighting ─────────────────────────
 
 - (void)applyMarkdownHighlighting {
+    if ([self isRichTextMode]) return;
     NSTextStorage *ts = _textView.textStorage;
     NSString *str     = [ts.string copy];
     NSUInteger len    = str.length;
@@ -1627,6 +2072,10 @@ static const CGFloat   kVInset                 = 24.0;
 }
 
 - (void)applyFont {
+    // Save font prefs
+    [[NSUserDefaults standardUserDefaults] setObject:_fontFamily forKey:kFontFamilyKey];
+    [[NSUserDefaults standardUserDefaults] setDouble:_currentFontSize forKey:kFontSizeKey];
+
     NSFont *font = [self currentFont];
     NSMutableParagraphStyle *para = [[NSMutableParagraphStyle alloc] init];
     para.lineSpacing = _currentLineSpacing;
@@ -1635,12 +2084,53 @@ static const CGFloat   kVInset                 = 24.0;
         NSForegroundColorAttributeName : [self iaTextColor],
         NSParagraphStyleAttributeName  : para,
     };
-    NSRange all = NSMakeRange(0, _textView.textStorage.length);
-    [_textView.textStorage setAttributes:attrs range:all];
     _textView.typingAttributes = attrs;
     _textView.font = font;
     [_rulerView setNeedsDisplay:YES];
+    if ([self isRichTextMode]) return;  // don't flatten rich-text attributes
+    NSRange all = NSMakeRange(0, _textView.textStorage.length);
+    [_textView.textStorage setAttributes:attrs range:all];
     [self applyMarkdownHighlighting];
+}
+
+- (IBAction)applyParagraphStyle:(id)sender {
+    NSInteger level = [(NSMenuItem *)sender tag];  // 0 = Normal, 1-6 = H1-H6
+    static CGFloat sizes[] = {0, 28, 22, 18, 14, 13, 12};
+    NSRange sel = _textView.selectedRange;
+    NSString *str = _textView.string;
+    NSRange paraRange = [str paragraphRangeForRange:sel];
+    NSFont *font = (level == 0)
+        ? [self currentFont]
+        : [NSFont boldSystemFontOfSize:sizes[level]];
+    [_textView.textStorage addAttribute:NSFontAttributeName value:font range:paraRange];
+    _isDirty = YES;
+    [self updateTitle];
+}
+
+- (IBAction)showTextColorPicker:(id)sender {
+    NSColorPanel *cp = [NSColorPanel sharedColorPanel];
+    cp.color      = [self iaTextColor];
+    cp.target     = self;
+    cp.action     = @selector(colorPanelColorChanged:);
+    cp.continuous = YES;
+    [cp orderFront:nil];
+}
+
+- (void)colorPanelColorChanged:(id)sender {
+    _customTextColor = [NSColorPanel sharedColorPanel].color;
+    NSError *err = nil;
+    NSData *data = [NSKeyedArchiver archivedDataWithRootObject:_customTextColor
+                                         requiringSecureCoding:NO error:&err];
+    if (data) [[NSUserDefaults standardUserDefaults] setObject:data forKey:kCustomTextColorKey];
+    [self applyIAWriterTheme];
+    [self applyFont];
+}
+
+- (IBAction)resetTextColor:(id)sender {
+    _customTextColor = nil;
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:kCustomTextColorKey];
+    [self applyIAWriterTheme];
+    [self applyFont];
 }
 
 - (IBAction)setFontMono:(id)sender  { _fontFamily = @"mono";  [self applyFont]; }
@@ -1662,6 +2152,8 @@ static const CGFloat   kVInset                 = 24.0;
 
 - (IBAction)setLineSpacing:(id)sender {
     _currentLineSpacing = [(NSMenuItem *)sender tag] / 10.0;
+    // Save line spacing pref
+    [[NSUserDefaults standardUserDefaults] setDouble:_currentLineSpacing forKey:kLineSpacingKey];
     [self applyFont];
 }
 
