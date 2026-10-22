@@ -1,0 +1,87 @@
+# ============================================================
+#  Notepad — Makefile
+#  Target: macOS arm64 (Apple Silicon / M1+)
+#
+#  Usage:
+#    make          — build Notepad.app
+#    make run      — build and launch
+#    make clean    — remove build artefacts
+# ============================================================
+
+APP      = Notepad
+BUNDLE   = $(APP).app
+BINARY   = $(BUNDLE)/Contents/MacOS/$(APP)
+PLIST    = $(BUNDLE)/Contents/Info.plist
+ICNS_SRC = Notepad.icns
+ICNS_DST = $(BUNDLE)/Contents/Resources/Notepad.icns
+SRC      = main.mm
+ENTITLE  = Notepad.entitlements
+# Set to a Developer ID for a notarizable, distributable build. Ad-hoc (-) works
+# only on the build machine; Gatekeeper blocks ad-hoc builds received through any
+# quarantine-triggering channel (download, AirDrop, email).
+SIGN_ID  = -
+
+CXX      = clang++
+ARCH     = arm64
+SDK      = $(shell xcrun --sdk macosx --show-sdk-path)
+MIN_VER  = 12.0
+
+CXXFLAGS = -arch $(ARCH) \
+           -std=c++17 \
+           -fobjc-arc \
+           -isysroot $(SDK) \
+           -mmacosx-version-min=$(MIN_VER) \
+           -Wall -Wextra -O2
+
+LDFLAGS  = -arch $(ARCH) \
+           -isysroot $(SDK) \
+           -mmacosx-version-min=$(MIN_VER) \
+           -framework Cocoa \
+           -framework WebKit
+
+.PHONY: all run clean
+
+all: $(BINARY) $(PLIST) $(ICNS_DST) codesign
+
+$(BUNDLE)/Contents/MacOS:
+	mkdir -p $@
+
+$(BINARY): $(SRC) | $(BUNDLE)/Contents/MacOS
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $<
+	xattr -c $@
+
+$(ICNS_DST): $(ICNS_SRC) | $(BUNDLE)/Contents/MacOS
+	mkdir -p $(BUNDLE)/Contents/Resources
+	cp $(ICNS_SRC) $@
+	xattr -c $@
+
+$(PLIST): Info.plist | $(BUNDLE)/Contents/MacOS
+	mkdir -p $(BUNDLE)/Contents
+	cp Info.plist $@
+	xattr -c $@
+
+.PHONY: codesign
+codesign: $(BINARY) $(PLIST)
+	xattr -cr $(BUNDLE)
+	codesign --force --options runtime --entitlements $(ENTITLE) --sign $(SIGN_ID) $(BUNDLE)
+
+
+run: all
+	open $(BUNDLE)
+
+install: all
+	cp -r $(BUNDLE) /Applications/$(BUNDLE)
+	xattr -cr /Applications/$(BUNDLE)
+	@echo "Installed to /Applications/$(BUNDLE)"
+
+dmg: all
+	$(eval DMG_DIR := $(shell mktemp -d))
+	cp -r $(BUNDLE) "$(DMG_DIR)/$(BUNDLE)"
+	ln -s /Applications "$(DMG_DIR)/Applications"
+	hdiutil create -volname "$(APP)" -srcfolder "$(DMG_DIR)" \
+	    -ov -format UDZO -o "$(APP).dmg"
+	rm -rf "$(DMG_DIR)"
+	@echo "Created $(APP).dmg"
+
+clean:
+	rm -rf $(BUNDLE)

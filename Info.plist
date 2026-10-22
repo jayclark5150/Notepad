@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>             <string>Notepad</string>
+  <key>CFBundleIdentifier</key>       <string>com.michaelson-clark.notepad</string>
+  <key>CFBundleVersion</key>          <string>1.3.0</string>
+  <key>CFBundleShortVersionString</key><string>1.3.0</string>
+  <key>CFBundleExecutable</key>       <string>Notepad</string>
+  <key>CFBundlePackageType</key>      <string>APPL</string>
+  <key>LSMinimumSystemVersion</key>   <string>12.0</string>
+  <key>NSHighResolutionCapable</key>  <true/>
+  <key>NSPrincipalClass</key>         <string>NSApplication</string>
+  <key>CFBundleIconFile</key>         <string>Notepad</string>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>          <string>Plain Text</string>
+      <key>CFBundleTypeRole</key>          <string>Editor</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.plain-text</string>
+        <string>net.daringfireball.markdown</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>          <string>Word Document</string>
+      <key>CFBundleTypeRole</key>          <string>Editor</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>org.openxmlformats.wordprocessingml.document</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>          <string>Legacy Word Document</string>
+      <key>CFBundleTypeRole</key>          <string>Viewer</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>com.microsoft.word.doc</string>
+      </array>
+    </dict>
+  </array>
+</dict>
+</plist>
