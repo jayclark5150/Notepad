@@ -1137,6 +1137,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
 
 - (void)textViewDidChangeSelection:(NSNotification *)note {
     [self updateStatusBar];
+    if (_typewriterMode && _editMode) [self scrollCursorToCenter];
     if (_headingStylePopup && [self isRichTextMode] && _editMode) {
         NSUInteger pos = _textView.selectedRange.location;
         if (pos < _textView.textStorage.length || pos == 0) {
@@ -1456,9 +1457,16 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
 - (void)scrollCursorToCenter {
     NSRange sel = _textView.selectedRange;
     if (sel.location == NSNotFound) return;
-    NSRange glyphRange = [_textView.layoutManager glyphRangeForCharacterRange:NSMakeRange(sel.location, 0)
-                                                         actualCharacterRange:nil];
-    NSRect lineRect = [_textView.layoutManager lineFragmentRectForGlyphAtIndex:glyphRange.location effectiveRange:nil];
+    NSLayoutManager *lm = _textView.layoutManager;
+    NSRect lineRect;
+    // Cursor past end of laid-out glyphs (blank line after a trailing newline)
+    if (sel.location >= _textView.string.length && !NSIsEmptyRect(lm.extraLineFragmentRect)) {
+        lineRect = lm.extraLineFragmentRect;
+    } else {
+        NSRange gr = [lm glyphRangeForCharacterRange:NSMakeRange(sel.location, 0)
+                                actualCharacterRange:nil];
+        lineRect = [lm lineFragmentRectForGlyphAtIndex:gr.location effectiveRange:nil];
+    }
     CGFloat cursorY = lineRect.origin.y + _textView.textContainerInset.height;
     CGFloat viewH = _scrollView.contentSize.height;
     CGFloat targetY = MAX(0, cursorY - viewH / 2.0);
