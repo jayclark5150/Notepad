@@ -2,7 +2,7 @@
 
 A document editor for macOS — inspired by the clean aesthetic of iA Writer. Open and edit plain text, Markdown, and Word documents in a distraction-free, centered writing environment.
 
-![macOS](https://img.shields.io/badge/macOS-12.0%2B-blue) ![Architecture](https://img.shields.io/badge/arch-arm64-green) ![Version](https://img.shields.io/badge/version-1.4.0-orange)
+![macOS](https://img.shields.io/badge/macOS-12.0%2B-blue) ![Architecture](https://img.shields.io/badge/arch-arm64-green) ![Version](https://img.shields.io/badge/version-1.5.0-orange)
 
 ## Features
 
@@ -14,7 +14,7 @@ A document editor for macOS — inspired by the clean aesthetic of iA Writer. Op
 
 ### Editor
 - **iA Writer-inspired theme** — adapts automatically to macOS dark / light mode with custom colors
-- **Centered writing column** — 720 px max-width with generous margins, just like iA Writer
+- **Centered writing column** — adjustable column width (300–1200 px, default 720) with auto-centering margins
 - **Markdown syntax highlighting** — headers, code blocks, bold, italic, blockquotes with iA Writer accent colors
 - **Edit / Preview toggle** — switch between raw Markdown and rendered preview in the same pane (Cmd+\\)
 - **Formatting toolbar** — Bold, Italic, Underline, Strikethrough, alignment buttons, and Heading Style popup (DOCX mode only)
@@ -41,15 +41,23 @@ A document editor for macOS — inspired by the clean aesthetic of iA Writer. Op
 - Font size (8–72 pt)
 - Typewriter mode toggle
 - Spelling & grammar toggle
+- Column width (300–1200 px slider)
 - All settings persisted via NSUserDefaults
 
 ## Keyboard Shortcuts
 
 | Action | Shortcut |
 |---|---|
+| New | Cmd+N |
+| Open | Cmd+O |
+| Close | Cmd+W |
+| Save | Cmd+S |
+| Save As | Cmd+Shift+S |
+| Print | Cmd+P |
+| Minimize | Cmd+M |
+| Enter Full Screen | Ctrl+Cmd+F |
 | Toggle Edit / Preview | Cmd+\\ |
 | Preferences | Cmd+, |
-| Print | Cmd+P |
 | Show Fonts panel | Cmd+T |
 | Bold | Cmd+B |
 | Italic | Cmd+I |

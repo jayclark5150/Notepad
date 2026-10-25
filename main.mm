@@ -388,6 +388,7 @@ static const CGFloat kRulerWidth = 50.0;
 @property (nonatomic, strong) NSPopUpButton         *headingStylePopup;
 @property (nonatomic, strong) NSMenu                *recentSubmenu;
 @property (nonatomic, strong) NSPanel               *prefsPanel;
+@property (nonatomic, assign) CGFloat                columnWidth;
 @end
 
 static NSString *gPendingOpenPath = nil;
@@ -395,8 +396,11 @@ static NSString *const kPreviewFontSizeKey     = @"PreviewFontSize";
 static const CGFloat   kPreviewFontSizeDefault = 15.0;
 static const CGFloat   kPreviewFontSizeMin     = 8.0;
 static const CGFloat   kPreviewFontSizeMax     = 72.0;
-static const CGFloat   kColumnWidth            = 720.0;
 static const CGFloat   kVInset                 = 24.0;
+static NSString *const kColumnWidthKey         = @"ColumnWidth";
+static const CGFloat   kColumnWidthDefault     = 720.0;
+static const CGFloat   kColumnWidthMin         = 300.0;
+static const CGFloat   kColumnWidthMax         = 1200.0;
 static NSString *const kCustomTextColorKey     = @"CustomTextColor";
 
 @implementation AppDelegate
@@ -426,6 +430,9 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     double savedSpacing = [[NSUserDefaults standardUserDefaults] doubleForKey:kLineSpacingKey];
     if (savedSpacing >= 0) _currentLineSpacing = savedSpacing;
     _typewriterMode = [[NSUserDefaults standardUserDefaults] boolForKey:kTypewriterModeKey];
+    double savedColWidth = [[NSUserDefaults standardUserDefaults] doubleForKey:kColumnWidthKey];
+    _columnWidth = (savedColWidth >= kColumnWidthMin && savedColWidth <= kColumnWidthMax)
+                       ? savedColWidth : kColumnWidthDefault;
 
     [self buildMenu];
     [self buildWindow];
@@ -741,7 +748,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
 
 - (void)updateTextContainerInset {
     CGFloat availW = _scrollView.contentSize.width;
-    CGFloat hInset = MAX(0.0, (availW - kColumnWidth) / 2.0);
+    CGFloat hInset = MAX(0.0, (availW - _columnWidth) / 2.0);
     _textView.textContainerInset = NSMakeSize(hInset, kVInset);
 }
 
@@ -769,6 +776,8 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     NSMenu *fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
     [fileMenu addItemWithTitle:@"New"   action:@selector(newDocument:)  keyEquivalent:@"n"];
     [fileMenu addItemWithTitle:@"Open…" action:@selector(openDocument:) keyEquivalent:@"o"];
+    [fileMenu addItem:[NSMenuItem separatorItem]];
+    [fileMenu addItemWithTitle:@"Close" action:@selector(performClose:) keyEquivalent:@"w"];
     [fileMenu addItem:[NSMenuItem separatorItem]];
     [fileMenu addItemWithTitle:@"Save"  action:@selector(saveDocument:) keyEquivalent:@"s"];
     NSMenuItem *saveAs = [fileMenu addItemWithTitle:@"Save As…"
@@ -954,6 +963,22 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     }
 
     viewItem.submenu = viewMenu;
+
+    // Window menu
+    NSMenuItem *windowItem = [main addItemWithTitle:@"Window" action:nil keyEquivalent:@""];
+    NSMenu *windowMenu = [[NSMenu alloc] initWithTitle:@"Window"];
+    [windowMenu addItemWithTitle:@"Minimize"        action:@selector(miniaturize:) keyEquivalent:@"m"];
+    [windowMenu addItemWithTitle:@"Zoom"            action:@selector(zoom:)        keyEquivalent:@""];
+    [windowMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *fsItem = [windowMenu addItemWithTitle:@"Enter Full Screen"
+                                               action:@selector(toggleFullScreen:)
+                                        keyEquivalent:@"f"];
+    fsItem.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagControl;
+    [windowMenu addItem:[NSMenuItem separatorItem]];
+    [windowMenu addItemWithTitle:@"Bring All to Front" action:@selector(arrangeInFront:) keyEquivalent:@""];
+    windowItem.submenu = windowMenu;
+    [NSApp setWindowsMenu:windowMenu];
+
     (void)findItem;
     (void)boldFmt; (void)italicFmt; (void)underlineFmt; (void)strikeFmt;
     (void)alignLeftFmt; (void)alignCenterFmt; (void)alignRightFmt;
@@ -1295,7 +1320,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
 
 - (IBAction)showPreferences:(id)sender {
     if (_prefsPanel) { [_prefsPanel makeKeyAndOrderFront:nil]; return; }
-    _prefsPanel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,300,220)
+    _prefsPanel = [[NSPanel alloc] initWithContentRect:NSMakeRect(0,0,300,280)
                                              styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable
                                                backing:NSBackingStoreBuffered defer:NO];
     _prefsPanel.title = @"Preferences";
@@ -1303,11 +1328,11 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     NSView *cv = _prefsPanel.contentView;
 
     // Font Family
-    NSTextField *famLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(20, 172, 100, 20)];
+    NSTextField *famLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(20, 232, 100, 20)];
     famLabel.stringValue = @"Font Family:"; famLabel.editable = NO; famLabel.bordered = NO;
     famLabel.backgroundColor = [NSColor clearColor];
     [cv addSubview:famLabel];
-    NSPopUpButton *famPop = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(120, 168, 160, 26)];
+    NSPopUpButton *famPop = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(120, 228, 160, 26)];
     [famPop addItemsWithTitles:@[@"Monospaced", @"Sans-Serif", @"Serif"]];
     [famPop selectItemWithTitle:[_fontFamily isEqualToString:@"sans"] ? @"Sans-Serif" :
                                  [_fontFamily isEqualToString:@"serif"] ? @"Serif" : @"Monospaced"];
@@ -1315,34 +1340,50 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     [cv addSubview:famPop];
 
     // Font Size
-    NSTextField *szLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(20, 132, 100, 20)];
+    NSTextField *szLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(20, 192, 100, 20)];
     szLabel.stringValue = @"Font Size:"; szLabel.editable = NO; szLabel.bordered = NO;
     szLabel.backgroundColor = [NSColor clearColor];
     [cv addSubview:szLabel];
-    NSTextField *szField = [[NSTextField alloc] initWithFrame:NSMakeRect(120, 130, 60, 24)];
+    NSTextField *szField = [[NSTextField alloc] initWithFrame:NSMakeRect(120, 190, 60, 24)];
     szField.doubleValue = _currentFontSize; szField.tag = 101;
     szField.target = self; szField.action = @selector(prefsFontSizeChanged:);
     [cv addSubview:szField];
-    NSStepper *szStep = [[NSStepper alloc] initWithFrame:NSMakeRect(184, 130, 19, 24)];
+    NSStepper *szStep = [[NSStepper alloc] initWithFrame:NSMakeRect(184, 190, 19, 24)];
     szStep.minValue = 8; szStep.maxValue = 72; szStep.increment = 1;
     szStep.doubleValue = _currentFontSize; szStep.tag = 102;
     szStep.target = self; szStep.action = @selector(prefsFontSizeChanged:);
     [cv addSubview:szStep];
 
     // Typewriter
-    NSButton *twCheck = [[NSButton alloc] initWithFrame:NSMakeRect(20, 92, 260, 22)];
+    NSButton *twCheck = [[NSButton alloc] initWithFrame:NSMakeRect(20, 152, 260, 22)];
     [twCheck setButtonType:NSButtonTypeSwitch];
     twCheck.title = @"Typewriter Mode"; twCheck.state = _typewriterMode ? NSControlStateValueOn : NSControlStateValueOff;
     twCheck.target = self; twCheck.action = @selector(prefsTypewriterChanged:);
     [cv addSubview:twCheck];
 
     // Spell check
-    NSButton *spCheck = [[NSButton alloc] initWithFrame:NSMakeRect(20, 60, 260, 22)];
+    NSButton *spCheck = [[NSButton alloc] initWithFrame:NSMakeRect(20, 120, 260, 22)];
     [spCheck setButtonType:NSButtonTypeSwitch];
     spCheck.title = @"Check Spelling While Typing";
     spCheck.state = _textView.continuousSpellCheckingEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     spCheck.target = self; spCheck.action = @selector(prefsSpellChanged:);
     [cv addSubview:spCheck];
+
+    // Column Width
+    NSTextField *colLabel = [[NSTextField alloc] initWithFrame:NSMakeRect(20, 88, 120, 20)];
+    colLabel.stringValue = @"Column Width:"; colLabel.editable = NO; colLabel.bordered = NO;
+    colLabel.backgroundColor = [NSColor clearColor];
+    [cv addSubview:colLabel];
+    NSTextField *colValue = [[NSTextField alloc] initWithFrame:NSMakeRect(210, 88, 70, 20)];
+    colValue.stringValue = [NSString stringWithFormat:@"%.0f px", _columnWidth];
+    colValue.editable = NO; colValue.bordered = NO; colValue.alignment = NSTextAlignmentRight;
+    colValue.backgroundColor = [NSColor clearColor]; colValue.tag = 103;
+    [cv addSubview:colValue];
+    NSSlider *colSlider = [[NSSlider alloc] initWithFrame:NSMakeRect(20, 60, 260, 22)];
+    colSlider.minValue = kColumnWidthMin; colSlider.maxValue = kColumnWidthMax;
+    colSlider.doubleValue = _columnWidth; colSlider.tag = 104;
+    colSlider.target = self; colSlider.action = @selector(prefsColumnWidthChanged:);
+    [cv addSubview:colSlider];
 
     [_prefsPanel makeKeyAndOrderFront:nil];
 }
@@ -1377,6 +1418,14 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     BOOL on = ([(NSButton *)sender state] == NSControlStateValueOn);
     _textView.continuousSpellCheckingEnabled = on;
     [[NSUserDefaults standardUserDefaults] setBool:on forKey:kSpellCheckKey];
+}
+
+- (IBAction)prefsColumnWidthChanged:(id)sender {
+    _columnWidth = [(NSSlider *)sender doubleValue];
+    [[NSUserDefaults standardUserDefaults] setDouble:_columnWidth forKey:kColumnWidthKey];
+    NSTextField *valLabel = (NSTextField *)[_prefsPanel.contentView viewWithTag:103];
+    valLabel.stringValue = [NSString stringWithFormat:@"%.0f px", _columnWidth];
+    [self updateTextContainerInset];
 }
 
 // ── (DOCX conversion methods removed — now using NSAttributedString natively) ──
