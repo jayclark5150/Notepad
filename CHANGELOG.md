@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.1] - 2026-10-25
+- Fix link handler ignoring `claimedInline`, causing links inside bold/code to become invisible
+- Fix strikethrough not claiming its range, allowing links inside `~~…~~` to be double-processed
+- Fix invisible markers carrying bold/italic font metrics, causing cursor navigation artifacts
+- Fix `cursorLoc` defaulting to 0 on invalid selection, showing wrong marker state on initial load
+- Fix `NSUnderlineStyleAttributeName` not cleared on reset, leaking underline from DOCX to plain-text
+- Fix code fence markers becoming fully invisible (now always shown in dim color)
+- Fix double formatting pass per keystroke (suppress selection-change reformat after text-change reformat)
+- Fix potential re-entry cascade after heading font resize via async dispatch for selection-triggered formatting
+- Perf: compile 6 inline regex patterns once via `dispatch_once` instead of on every call
+
 ## [2.0.0] - 2026-10-25
 - **WYSIWYM live Markdown rendering** — syntax markers hide as you write and reappear when the cursor returns; no mode switch needed
 - Headings render at scaled font size in place; `## ` prefix hides when cursor is off-line

@@ -424,6 +424,7 @@ static const CGFloat kRulerWidth = 50.0;
 @property (nonatomic, strong) NSMenu                *recentSubmenu;
 @property (nonatomic, strong) NSPanel               *prefsPanel;
 @property (nonatomic, assign) CGFloat                columnWidth;
+@property (nonatomic, assign) BOOL                   suppressSelectionFormat;
 @end
 
 static NSString *gPendingOpenPath = nil;
@@ -1129,6 +1130,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     [_rulerView setNeedsDisplay:YES];
     [self updateStatusBar];
     if (!_isHighlighting && ![self isRichTextMode]) {
+        _suppressSelectionFormat = YES;
         [self applyWYSIWYMFormatting];
     }
     [self schedulePreviewUpdate];
@@ -1138,8 +1140,18 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
 - (void)textViewDidChangeSelection:(NSNotification *)note {
     [self updateStatusBar];
     if (_typewriterMode && _editMode) [self scrollCursorToCenter];
-    if (!_isHighlighting && ![self isRichTextMode] && _editMode)
-        [self applyWYSIWYMFormatting];
+    if (!_isHighlighting && ![self isRichTextMode] && _editMode) {
+        if (_suppressSelectionFormat) {
+            _suppressSelectionFormat = NO;
+        } else {
+            __weak AppDelegate *weakSelf = self;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                AppDelegate *s = weakSelf;
+                if (s && !s->_isHighlighting && ![s isRichTextMode] && s->_editMode)
+                    [s applyWYSIWYMFormatting];
+            });
+        }
+    }
     if (_headingStylePopup && [self isRichTextMode] && _editMode) {
         NSUInteger pos = _textView.selectedRange.location;
         if (pos < _textView.textStorage.length || pos == 0) {
@@ -2150,7 +2162,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     if (!len) return;
 
     NSRange    cursorRange = _textView.selectedRange;
-    NSUInteger cursorLoc   = (cursorRange.location != NSNotFound) ? cursorRange.location : 0;
+    NSUInteger cursorLoc   = (cursorRange.location != NSNotFound) ? cursorRange.location : NSUIntegerMax;
 
     _isHighlighting = YES;
     [ts beginEditing];
@@ -2174,6 +2186,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     [ts addAttribute:NSFontAttributeName            value:baseFont range:NSMakeRange(0, len)];
     [ts addAttribute:NSForegroundColorAttributeName value:baseFg   range:NSMakeRange(0, len)];
     [ts removeAttribute:NSStrikethroughStyleAttributeName          range:NSMakeRange(0, len)];
+    [ts removeAttribute:NSUnderlineStyleAttributeName              range:NSMakeRange(0, len)];
 
     NSMutableIndexSet *fenceIdx      = [NSMutableIndexSet indexSet];
     NSMutableIndexSet *claimedInline = [NSMutableIndexSet indexSet];
@@ -2195,7 +2208,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
             [fenceIdx addIndexesInRange:lineRange];
             if ([line hasPrefix:@"```"] || [line hasPrefix:@"~~~"]) {
                 [ts addAttribute:NSForegroundColorAttributeName
-                           value:cursorOnLine ? dimColor : bgColor
+                           value:dimColor
                            range:lineRange];
                 inFence = NO;
             } else {
@@ -2209,7 +2222,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
         if ([line hasPrefix:@"```"] || [line hasPrefix:@"~~~"]) {
             [fenceIdx addIndexesInRange:lineRange];
             [ts addAttribute:NSForegroundColorAttributeName
-                       value:cursorOnLine ? dimColor : bgColor
+                       value:dimColor
                        range:lineRange];
             inFence = YES;
             lineStart += lineLen + 1;
@@ -2275,6 +2288,17 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
 
     // ── Inline pass ──────────────────────────────────────────
 
+    static NSRegularExpression *sRxCode, *sRxBoldItal, *sRxBold, *sRxItal, *sRxStrike, *sRxLink;
+    static dispatch_once_t sRxOnce;
+    dispatch_once(&sRxOnce, ^{
+        sRxCode     = [NSRegularExpression regularExpressionWithPattern:@"`([^`\\n]+)`"                                                                  options:0 error:nil];
+        sRxBoldItal = [NSRegularExpression regularExpressionWithPattern:@"\\*{3}(.+?)\\*{3}"                                                            options:0 error:nil];
+        sRxBold     = [NSRegularExpression regularExpressionWithPattern:@"\\*\\*(.+?)\\*\\*|__(.+?)__"                                                  options:0 error:nil];
+        sRxItal     = [NSRegularExpression regularExpressionWithPattern:@"(?<!\\*)\\*([^\\*\\n]+)\\*(?!\\*)|(?<!_)_([^_\\n]+)_(?!_)"                   options:0 error:nil];
+        sRxStrike   = [NSRegularExpression regularExpressionWithPattern:@"~~(.+?)~~"                                                                    options:0 error:nil];
+        sRxLink     = [NSRegularExpression regularExpressionWithPattern:@"!?\\[([^\\]\\n]*)\\]\\(([^\\)\\n]*)\\)"                                      options:0 error:nil];
+    });
+
     BOOL (^skip)(NSRange) = ^BOOL(NSRange r) {
         return [fenceIdx intersectsIndexesInRange:r] ||
                [claimedInline intersectsIndexesInRange:r];
@@ -2293,8 +2317,9 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
             active = NSIntersectionRange(cursorRange, full).length > 0;
         if (font) {
             [ts addAttribute:NSFontAttributeName value:font range:contentR];
-            [ts addAttribute:NSFontAttributeName value:font range:openR];
-            [ts addAttribute:NSFontAttributeName value:font range:closeR];
+            NSFont *markerFont = active ? font : baseFont;
+            [ts addAttribute:NSFontAttributeName value:markerFont range:openR];
+            [ts addAttribute:NSFontAttributeName value:markerFont range:closeR];
         }
         for (NSUInteger k = 0; k + 1 < extraAttrs.count; k += 2)
             [ts addAttribute:extraAttrs[k] value:extraAttrs[k+1] range:contentR];
@@ -2303,11 +2328,8 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
         [ts addAttribute:NSForegroundColorAttributeName value:mc range:closeR];
     };
 
-    NSRegularExpression *r;
-
     // Inline code  `…`
-    r = [NSRegularExpression regularExpressionWithPattern:@"`([^`\\n]+)`" options:0 error:nil];
-    [r enumerateMatchesInString:str options:0 range:NSMakeRange(0, len)
+    [sRxCode enumerateMatchesInString:str options:0 range:NSMakeRange(0, len)
                      usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *stop) {
         (void)f; (void)stop;
         if (skip(m.range)) return;
@@ -2317,8 +2339,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     }];
 
     // Bold+italic  ***…***
-    r = [NSRegularExpression regularExpressionWithPattern:@"\\*{3}(.+?)\\*{3}" options:0 error:nil];
-    [r enumerateMatchesInString:str options:0 range:NSMakeRange(0, len)
+    [sRxBoldItal enumerateMatchesInString:str options:0 range:NSMakeRange(0, len)
                      usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *stop) {
         (void)f; (void)stop;
         if (skip(m.range)) return;
@@ -2327,8 +2348,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     }];
 
     // Bold  **…**  or  __…__
-    r = [NSRegularExpression regularExpressionWithPattern:@"\\*\\*(.+?)\\*\\*|__(.+?)__" options:0 error:nil];
-    [r enumerateMatchesInString:str options:0 range:NSMakeRange(0, len)
+    [sRxBold enumerateMatchesInString:str options:0 range:NSMakeRange(0, len)
                      usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *stop) {
         (void)f; (void)stop;
         if (skip(m.range)) return;
@@ -2337,10 +2357,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     }];
 
     // Italic  *…*  or  _…_
-    r = [NSRegularExpression
-         regularExpressionWithPattern:@"(?<!\\*)\\*([^\\*\\n]+)\\*(?!\\*)|(?<!_)_([^_\\n]+)_(?!_)"
-                              options:0 error:nil];
-    [r enumerateMatchesInString:str options:0 range:NSMakeRange(0, len)
+    [sRxItal enumerateMatchesInString:str options:0 range:NSMakeRange(0, len)
                      usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *stop) {
         (void)f; (void)stop;
         if (skip(m.range)) return;
@@ -2349,24 +2366,21 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     }];
 
     // Strikethrough  ~~…~~
-    r = [NSRegularExpression regularExpressionWithPattern:@"~~(.+?)~~" options:0 error:nil];
-    [r enumerateMatchesInString:str options:0 range:NSMakeRange(0, len)
+    [sRxStrike enumerateMatchesInString:str options:0 range:NSMakeRange(0, len)
                      usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *stop) {
         (void)f; (void)stop;
         if (skip(m.range)) return;
+        [claimedInline addIndexesInRange:m.range];
         applyInline(m.range, 2, 2, nil,
                     @[NSStrikethroughStyleAttributeName, @(NSUnderlineStyleSingle),
                       NSForegroundColorAttributeName, quoteColor]);
     }];
 
     // Links  [text](url)  and images  ![alt](url)
-    r = [NSRegularExpression
-         regularExpressionWithPattern:@"!?\\[([^\\]\\n]*)\\]\\(([^\\)\\n]*)\\)"
-                              options:0 error:nil];
-    [r enumerateMatchesInString:str options:0 range:NSMakeRange(0, len)
+    [sRxLink enumerateMatchesInString:str options:0 range:NSMakeRange(0, len)
                      usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *stop) {
         (void)f; (void)stop;
-        if ([fenceIdx intersectsIndexesInRange:m.range]) return;
+        if (skip(m.range)) return;
         NSRange full      = m.range;
         NSRange textRange = [m rangeAtIndex:1];
         BOOL active = (cursorLoc >= full.location && cursorLoc <= NSMaxRange(full));

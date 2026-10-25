@@ -2,7 +2,7 @@
 
 A document editor for macOS. Open and edit plain text, Markdown, and Word documents in a distraction-free, centered writing environment with seamless live Markdown rendering.
 
-![macOS](https://img.shields.io/badge/macOS-12.0%2B-blue) ![Architecture](https://img.shields.io/badge/arch-arm64-green) ![Version](https://img.shields.io/badge/version-2.0.0-orange)
+![macOS](https://img.shields.io/badge/macOS-12.0%2B-blue) ![Architecture](https://img.shields.io/badge/arch-arm64-green) ![Version](https://img.shields.io/badge/version-2.0.1-orange)
 
 ## Features
 
