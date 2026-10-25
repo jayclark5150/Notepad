@@ -496,7 +496,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
                         change:(NSDictionary *)change context:(void *)context {
     if ([keyPath isEqualToString:@"effectiveAppearance"]) {
         [self applyTheme];
-        [self applyMarkdownHighlighting];
+        [self applyWYSIWYMFormatting];
         if (!_editMode) [self updatePreview];
     }
 }
@@ -1129,7 +1129,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     [_rulerView setNeedsDisplay:YES];
     [self updateStatusBar];
     if (!_isHighlighting && ![self isRichTextMode]) {
-        [self applyMarkdownHighlighting];
+        [self applyWYSIWYMFormatting];
     }
     [self schedulePreviewUpdate];
     if (_typewriterMode && _editMode) [self scrollCursorToCenter];
@@ -1138,6 +1138,8 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
 - (void)textViewDidChangeSelection:(NSNotification *)note {
     [self updateStatusBar];
     if (_typewriterMode && _editMode) [self scrollCursorToCenter];
+    if (!_isHighlighting && ![self isRichTextMode] && _editMode)
+        [self applyWYSIWYMFormatting];
     if (_headingStylePopup && [self isRichTextMode] && _editMode) {
         NSUInteger pos = _textView.selectedRange.location;
         if (pos < _textView.textStorage.length || pos == 0) {
@@ -2138,130 +2140,246 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     return [out copy];
 }
 
-// ── Markdown Syntax Highlighting ─────────────────────────
+// ── WYSIWYM Markdown Formatting ───────────────────────────
 
-- (void)applyMarkdownHighlighting {
+- (void)applyWYSIWYMFormatting {
     if ([self isRichTextMode]) return;
-    NSTextStorage *ts = _textView.textStorage;
-    NSString *str     = [ts.string copy];
-    NSUInteger len    = str.length;
-    if (len == 0) return;
+    NSTextStorage *ts  = _textView.textStorage;
+    NSString      *str = [ts.string copy];
+    NSUInteger     len = str.length;
+    if (!len) return;
+
+    NSRange    cursorRange = _textView.selectedRange;
+    NSUInteger cursorLoc   = (cursorRange.location != NSNotFound) ? cursorRange.location : 0;
 
     _isHighlighting = YES;
     [ts beginEditing];
 
-    NSColor *baseText = [self iaTextColor];
-    [ts addAttribute:NSForegroundColorAttributeName value:baseText range:NSMakeRange(0, len)];
+    NSColor *baseFg     = [self iaTextColor];
+    NSColor *bgColor    = [self iaBgColor];
+    NSFont  *baseFont   = [self currentFont];
+    NSColor *headColor  = [self iaHeadingColor];
+    NSColor *codeColor  = [self iaCodeColor];
+    NSColor *dimColor   = [NSColor tertiaryLabelColor];
+    NSColor *quoteColor = [NSColor secondaryLabelColor];
 
-    NSFont *base   = [self currentFont];
-    NSFont *bold   = [[NSFontManager sharedFontManager] convertFont:base toHaveTrait:NSBoldFontMask];
-    NSFont *italic = [[NSFontManager sharedFontManager] convertFont:base toHaveTrait:NSItalicFontMask];
+    NSFontManager *fm      = [NSFontManager sharedFontManager];
+    NSFont *boldFont       = [fm convertFont:baseFont toHaveTrait:NSBoldFontMask];
+    NSFont *italicFont     = [fm convertFont:baseFont toHaveTrait:NSItalicFontMask];
+    NSFont *boldItalicFont = [fm convertFont:boldFont toHaveTrait:NSItalicFontMask];
+    NSFont *monoFont       = [NSFont monospacedSystemFontOfSize:_currentFontSize * 0.9
+                                                         weight:NSFontWeightRegular];
 
-    NSColor *headingColor = [self iaHeadingColor];
-    NSColor *codeColor    = [self iaCodeColor];
-    NSColor *quoteColor   = [NSColor secondaryLabelColor];
-    NSColor *dimColor     = [NSColor tertiaryLabelColor];
+    // Reset to base
+    [ts addAttribute:NSFontAttributeName            value:baseFont range:NSMakeRange(0, len)];
+    [ts addAttribute:NSForegroundColorAttributeName value:baseFg   range:NSMakeRange(0, len)];
+    [ts removeAttribute:NSStrikethroughStyleAttributeName          range:NSMakeRange(0, len)];
 
+    NSMutableIndexSet *fenceIdx      = [NSMutableIndexSet indexSet];
+    NSMutableIndexSet *claimedInline = [NSMutableIndexSet indexSet];
+
+    // ── Line-level pass (headings, fences, blockquotes, HRs) ────
     NSArray<NSString *> *lines = [str componentsSeparatedByString:@"\n"];
-    NSUInteger pos   = 0;
-    BOOL       fence = NO;
+    NSUInteger lineStart = 0;
+    BOOL       inFence   = NO;
 
     for (NSString *line in lines) {
-        NSUInteger lineLen = line.length;
-        NSRange    lr      = NSMakeRange(pos, lineLen);
+        NSUInteger lineLen   = line.length;
+        NSRange    lineRange = NSMakeRange(lineStart, lineLen);
 
-        if (fence) {
+        BOOL cursorOnLine = (cursorLoc >= lineStart && cursorLoc <= lineStart + lineLen);
+        if (!cursorOnLine && cursorRange.length > 0)
+            cursorOnLine = (NSIntersectionRange(cursorRange, lineRange).length > 0);
+
+        if (inFence) {
+            [fenceIdx addIndexesInRange:lineRange];
             if ([line hasPrefix:@"```"] || [line hasPrefix:@"~~~"]) {
-                [ts addAttribute:NSForegroundColorAttributeName value:dimColor range:lr];
-                fence = NO;
+                [ts addAttribute:NSForegroundColorAttributeName
+                           value:cursorOnLine ? dimColor : bgColor
+                           range:lineRange];
+                inFence = NO;
             } else {
-                [ts addAttribute:NSForegroundColorAttributeName value:codeColor range:lr];
+                [ts addAttribute:NSFontAttributeName            value:monoFont  range:lineRange];
+                [ts addAttribute:NSForegroundColorAttributeName value:codeColor range:lineRange];
             }
-            pos += lineLen + 1;
+            lineStart += lineLen + 1;
             continue;
         }
 
         if ([line hasPrefix:@"```"] || [line hasPrefix:@"~~~"]) {
-            [ts addAttribute:NSForegroundColorAttributeName value:dimColor range:lr];
-            fence = YES;
-            pos += lineLen + 1;
+            [fenceIdx addIndexesInRange:lineRange];
+            [ts addAttribute:NSForegroundColorAttributeName
+                       value:cursorOnLine ? dimColor : bgColor
+                       range:lineRange];
+            inFence = YES;
+            lineStart += lineLen + 1;
             continue;
         }
 
-        // ATX header
-        NSUInteger h = 0;
-        while (h < 6 && h < lineLen && [line characterAtIndex:h] == '#') h++;
-        if (h > 0 && h < lineLen && [line characterAtIndex:h] == ' ') {
-            [ts addAttribute:NSForegroundColorAttributeName value:headingColor range:lr];
-            if (bold) [ts addAttribute:NSFontAttributeName value:bold range:lr];
-            pos += lineLen + 1;
+        // ATX heading  #  ##  ###  …
+        {
+            NSUInteger h = 0;
+            while (h < 6 && h < lineLen && [line characterAtIndex:h] == '#') h++;
+            if (h > 0 && h < lineLen && [line characterAtIndex:h] == ' ') {
+                static CGFloat kScale[] = {0, 1.75, 1.45, 1.2, 1.05, 1.0, 1.0};
+                NSFont *hFont = [NSFont boldSystemFontOfSize:
+                                    floor(_currentFontSize * kScale[MIN(h, 6)])];
+                NSRange markerRange  = NSMakeRange(lineStart, h + 1);
+                NSUInteger cLen      = lineLen > h + 1 ? lineLen - h - 1 : 0;
+                NSRange contentRange = NSMakeRange(lineStart + h + 1, cLen);
+                [ts addAttribute:NSFontAttributeName            value:hFont     range:lineRange];
+                [ts addAttribute:NSForegroundColorAttributeName value:headColor range:contentRange];
+                [ts addAttribute:NSForegroundColorAttributeName
+                           value:cursorOnLine ? dimColor : bgColor
+                           range:markerRange];
+                lineStart += lineLen + 1;
+                continue;
+            }
+        }
+
+        // Blockquote  > …
+        if (lineLen >= 2 && [line hasPrefix:@"> "]) {
+            NSRange markerRange  = NSMakeRange(lineStart, 2);
+            NSRange contentRange = NSMakeRange(lineStart + 2, lineLen - 2);
+            [ts addAttribute:NSForegroundColorAttributeName value:quoteColor range:contentRange];
+            [ts addAttribute:NSForegroundColorAttributeName
+                       value:cursorOnLine ? dimColor : bgColor
+                       range:markerRange];
+            lineStart += lineLen + 1;
             continue;
         }
 
-        // Blockquote
-        if ([line hasPrefix:@"> "]) {
-            [ts addAttribute:NSForegroundColorAttributeName value:quoteColor range:lr];
-            pos += lineLen + 1;
-            continue;
-        }
-
-        // Inline code
+        // Horizontal rule  ---  ***  ___
         {
-            NSRegularExpression *rx = [NSRegularExpression
-                regularExpressionWithPattern:@"`[^`\n]+`" options:0 error:nil];
-            [rx enumerateMatchesInString:str options:0 range:lr
-                              usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *stop){
-                (void)f; (void)stop;
-                [ts addAttribute:NSForegroundColorAttributeName value:codeColor range:m.range];
-            }];
+            NSString *t = [line stringByTrimmingCharactersInSet:
+                           [NSCharacterSet whitespaceCharacterSet]];
+            if (t.length >= 3) {
+                unichar fc = [t characterAtIndex:0];
+                if (fc == '-' || fc == '*' || fc == '_') {
+                    BOOL isHR = YES;
+                    for (NSUInteger j = 1; j < t.length && isHR; j++)
+                        if ([t characterAtIndex:j] != fc) isHR = NO;
+                    if (isHR) {
+                        [ts addAttribute:NSForegroundColorAttributeName
+                                   value:cursorOnLine ? dimColor : bgColor
+                                   range:lineRange];
+                        lineStart += lineLen + 1;
+                        continue;
+                    }
+                }
+            }
         }
 
-        // Bold
-        {
-            NSRegularExpression *rx = [NSRegularExpression
-                regularExpressionWithPattern:@"(\\*\\*|__)(.+?)(\\*\\*|__)"
-                                     options:0 error:nil];
-            [rx enumerateMatchesInString:str options:0 range:lr
-                              usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *stop){
-                (void)f; (void)stop;
-                if (bold) [ts addAttribute:NSFontAttributeName value:bold range:m.range];
-                NSRange open  = NSMakeRange(m.range.location, 2);
-                NSRange close = NSMakeRange(NSMaxRange(m.range) - 2, 2);
-                [ts addAttribute:NSForegroundColorAttributeName value:dimColor range:open];
-                [ts addAttribute:NSForegroundColorAttributeName value:dimColor range:close];
-            }];
-        }
-
-        // Italic
-        {
-            NSRegularExpression *rx = [NSRegularExpression
-                regularExpressionWithPattern:@"(?<!\\*)\\*([^\\*\n]+)\\*(?!\\*)|(?<!_)_([^_\n]+)_(?!_)"
-                                     options:0 error:nil];
-            [rx enumerateMatchesInString:str options:0 range:lr
-                              usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *stop){
-                (void)f; (void)stop;
-                if (italic) [ts addAttribute:NSFontAttributeName value:italic range:m.range];
-                NSRange open  = NSMakeRange(m.range.location, 1);
-                NSRange close = NSMakeRange(NSMaxRange(m.range) - 1, 1);
-                [ts addAttribute:NSForegroundColorAttributeName value:dimColor range:open];
-                [ts addAttribute:NSForegroundColorAttributeName value:dimColor range:close];
-            }];
-        }
-
-        // Links / images
-        {
-            NSRegularExpression *rx = [NSRegularExpression
-                regularExpressionWithPattern:@"!?\\[[^\\]]*\\]\\([^\\)]*\\)"
-                                     options:0 error:nil];
-            [rx enumerateMatchesInString:str options:0 range:lr
-                              usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *stop){
-                (void)f; (void)stop;
-                [ts addAttribute:NSForegroundColorAttributeName value:headingColor range:m.range];
-            }];
-        }
-
-        pos += lineLen + 1;
+        lineStart += lineLen + 1;
     }
+
+    // ── Inline pass ──────────────────────────────────────────
+
+    BOOL (^skip)(NSRange) = ^BOOL(NSRange r) {
+        return [fenceIdx intersectsIndexesInRange:r] ||
+               [claimedInline intersectsIndexesInRange:r];
+    };
+
+    void (^applyInline)(NSRange, NSUInteger, NSUInteger, NSFont *, NSArray *) =
+        ^(NSRange full, NSUInteger openLen, NSUInteger closeLen,
+          NSFont *font, NSArray *extraAttrs) {
+        if (full.length < openLen + closeLen + 1) return;
+        NSRange openR    = NSMakeRange(full.location, openLen);
+        NSRange closeR   = NSMakeRange(NSMaxRange(full) - closeLen, closeLen);
+        NSRange contentR = NSMakeRange(full.location + openLen,
+                                       full.length - openLen - closeLen);
+        BOOL active = (cursorLoc >= full.location && cursorLoc <= NSMaxRange(full));
+        if (!active && cursorRange.length > 0)
+            active = NSIntersectionRange(cursorRange, full).length > 0;
+        if (font) {
+            [ts addAttribute:NSFontAttributeName value:font range:contentR];
+            [ts addAttribute:NSFontAttributeName value:font range:openR];
+            [ts addAttribute:NSFontAttributeName value:font range:closeR];
+        }
+        for (NSUInteger k = 0; k + 1 < extraAttrs.count; k += 2)
+            [ts addAttribute:extraAttrs[k] value:extraAttrs[k+1] range:contentR];
+        NSColor *mc = active ? dimColor : bgColor;
+        [ts addAttribute:NSForegroundColorAttributeName value:mc range:openR];
+        [ts addAttribute:NSForegroundColorAttributeName value:mc range:closeR];
+    };
+
+    NSRegularExpression *r;
+
+    // Inline code  `…`
+    r = [NSRegularExpression regularExpressionWithPattern:@"`([^`\\n]+)`" options:0 error:nil];
+    [r enumerateMatchesInString:str options:0 range:NSMakeRange(0, len)
+                     usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *stop) {
+        (void)f; (void)stop;
+        if (skip(m.range)) return;
+        [claimedInline addIndexesInRange:m.range];
+        applyInline(m.range, 1, 1, monoFont,
+                    @[NSForegroundColorAttributeName, codeColor]);
+    }];
+
+    // Bold+italic  ***…***
+    r = [NSRegularExpression regularExpressionWithPattern:@"\\*{3}(.+?)\\*{3}" options:0 error:nil];
+    [r enumerateMatchesInString:str options:0 range:NSMakeRange(0, len)
+                     usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *stop) {
+        (void)f; (void)stop;
+        if (skip(m.range)) return;
+        [claimedInline addIndexesInRange:m.range];
+        applyInline(m.range, 3, 3, boldItalicFont, @[]);
+    }];
+
+    // Bold  **…**  or  __…__
+    r = [NSRegularExpression regularExpressionWithPattern:@"\\*\\*(.+?)\\*\\*|__(.+?)__" options:0 error:nil];
+    [r enumerateMatchesInString:str options:0 range:NSMakeRange(0, len)
+                     usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *stop) {
+        (void)f; (void)stop;
+        if (skip(m.range)) return;
+        [claimedInline addIndexesInRange:m.range];
+        applyInline(m.range, 2, 2, boldFont, @[]);
+    }];
+
+    // Italic  *…*  or  _…_
+    r = [NSRegularExpression
+         regularExpressionWithPattern:@"(?<!\\*)\\*([^\\*\\n]+)\\*(?!\\*)|(?<!_)_([^_\\n]+)_(?!_)"
+                              options:0 error:nil];
+    [r enumerateMatchesInString:str options:0 range:NSMakeRange(0, len)
+                     usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *stop) {
+        (void)f; (void)stop;
+        if (skip(m.range)) return;
+        [claimedInline addIndexesInRange:m.range];
+        applyInline(m.range, 1, 1, italicFont, @[]);
+    }];
+
+    // Strikethrough  ~~…~~
+    r = [NSRegularExpression regularExpressionWithPattern:@"~~(.+?)~~" options:0 error:nil];
+    [r enumerateMatchesInString:str options:0 range:NSMakeRange(0, len)
+                     usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *stop) {
+        (void)f; (void)stop;
+        if (skip(m.range)) return;
+        applyInline(m.range, 2, 2, nil,
+                    @[NSStrikethroughStyleAttributeName, @(NSUnderlineStyleSingle),
+                      NSForegroundColorAttributeName, quoteColor]);
+    }];
+
+    // Links  [text](url)  and images  ![alt](url)
+    r = [NSRegularExpression
+         regularExpressionWithPattern:@"!?\\[([^\\]\\n]*)\\]\\(([^\\)\\n]*)\\)"
+                              options:0 error:nil];
+    [r enumerateMatchesInString:str options:0 range:NSMakeRange(0, len)
+                     usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *stop) {
+        (void)f; (void)stop;
+        if ([fenceIdx intersectsIndexesInRange:m.range]) return;
+        NSRange full      = m.range;
+        NSRange textRange = [m rangeAtIndex:1];
+        BOOL active = (cursorLoc >= full.location && cursorLoc <= NSMaxRange(full));
+        if (!active && cursorRange.length > 0)
+            active = NSIntersectionRange(cursorRange, full).length > 0;
+        if (active) {
+            [ts addAttribute:NSForegroundColorAttributeName value:headColor range:full];
+        } else {
+            [ts addAttribute:NSForegroundColorAttributeName value:bgColor range:full];
+            if (textRange.location != NSNotFound && textRange.length > 0)
+                [ts addAttribute:NSForegroundColorAttributeName value:headColor range:textRange];
+        }
+    }];
 
     [ts endEditing];
     _isHighlighting = NO;
@@ -2297,7 +2415,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     if ([self isRichTextMode]) return;  // don't flatten rich-text attributes
     NSRange all = NSMakeRange(0, _textView.textStorage.length);
     [_textView.textStorage setAttributes:attrs range:all];
-    [self applyMarkdownHighlighting];
+    [self applyWYSIWYMFormatting];
 }
 
 - (IBAction)applyParagraphStyle:(id)sender {

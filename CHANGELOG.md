@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.0.0] - 2026-10-25
+- **WYSIWYM live Markdown rendering** — syntax markers hide as you write and reappear when the cursor returns; no mode switch needed
+- Headings render at scaled font size in place; `## ` prefix hides when cursor is off-line
+- Bold, italic, bold+italic apply immediately as font traits; markers invisible until cursor enters span
+- Inline code spans use monospace font in accent color; backticks hidden off-span
+- Strikethrough renders with strikethrough attribute; `~~` markers hidden off-span
+- Links show only the link text in accent color; full `[text](url)` syntax revealed on cursor entry
+- Blockquotes hide `> ` prefix when cursor is off-line
+- Code fences hide opening/closing markers off-line; content uses monospace
+- Horizontal rules hidden when cursor is off-line
+- Rendered HTML preview (Cmd+\\) retained for print-ready output
+
 ## [1.4.0] - 2026-10-22
 - NSToolbar with Bold/Italic/Underline/Strikethrough, alignment buttons, and Heading Style popup
 - Typewriter mode: cursor scrolls to vertical center on each keystroke (Cmd+Shift+T)
