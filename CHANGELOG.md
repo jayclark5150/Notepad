@@ -13,12 +13,12 @@
 - Dark mode DOCX color fix
 
 ## [1.3.0] - 2026-10-01
-- iA Writer-inspired dark/light theme with dynamic NSColor
+- Dark/light theme with dynamic NSColor
 - Open and edit .docx files via NSAttributedString + DOCX round-trip
 - Open .doc (legacy Word) as read-only plain text
 - Single-pane Edit/Preview toggle (Cmd+\); removes split-pane preview
 - Centered 720px writing column with 24pt vertical padding
-- Syntax highlighting with iA Writer accent colors
+- Syntax highlighting with accent colors
 - Status bar shows file format badge [TXT/MD/DOCX/DOC]
 
 ## [1.0.6] - 2026-09-01

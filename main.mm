@@ -1,7 +1,7 @@
 // ============================================================
 //  Notepad — minimal document editor for macOS
 //  Supports: .txt, .md, .docx (read/write), .doc (read-only)
-//  iA Writer-inspired theme — dark/light with centered column
+//  Dark/light theme with centered column
 // ============================================================
 
 #import <Cocoa/Cocoa.h>
@@ -495,7 +495,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object
                         change:(NSDictionary *)change context:(void *)context {
     if ([keyPath isEqualToString:@"effectiveAppearance"]) {
-        [self applyIAWriterTheme];
+        [self applyTheme];
         [self applyMarkdownHighlighting];
         if (!_editMode) [self updatePreview];
     }
@@ -626,7 +626,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     separator.autoresizingMask = NSViewWidthSizable;
     [_window.contentView addSubview:separator];
 
-    [self applyIAWriterTheme];
+    [self applyTheme];
     [self applyFont];
     [self updateTextContainerInset];
 
@@ -758,7 +758,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
         : [NSColor colorWithRed:0xA0/255.0 green:0x52/255.0 blue:0x2D/255.0 alpha:1.0];
 }
 
-- (void)applyIAWriterTheme {
+- (void)applyTheme {
     NSColor *bg   = [self iaBgColor];
     NSColor *text = [self iaTextColor];
     _textView.backgroundColor     = bg;
@@ -1165,7 +1165,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     [_textView.textStorage replaceCharactersInRange:NSMakeRange(0, _textView.string.length)
                                          withString:@""];
     [_textView.undoManager removeAllActions];
-    [self applyIAWriterTheme];
+    [self applyTheme];
     [self updateTitle];
     [self updateStatusBar];
 }
@@ -1210,7 +1210,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
         [_textView.undoManager removeAllActions];
         _currentFilePath = path;
         _isDirty = NO;
-        [self applyIAWriterTheme];
+        [self applyTheme];
         [self fixDocxColorsForDarkMode];
         [self updateTitle];
         [self updateStatusBar];
@@ -2329,14 +2329,14 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     NSData *data = [NSKeyedArchiver archivedDataWithRootObject:_customTextColor
                                          requiringSecureCoding:NO error:&err];
     if (data) [[NSUserDefaults standardUserDefaults] setObject:data forKey:kCustomTextColorKey];
-    [self applyIAWriterTheme];
+    [self applyTheme];
     [self applyFont];
 }
 
 - (IBAction)resetTextColor:(id)sender {
     _customTextColor = nil;
     [[NSUserDefaults standardUserDefaults] removeObjectForKey:kCustomTextColorKey];
-    [self applyIAWriterTheme];
+    [self applyTheme];
     [self applyFont];
 }
 

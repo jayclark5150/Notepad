@@ -1,6 +1,6 @@
 # Notepad (macOS)
 
-A document editor for macOS — inspired by the clean aesthetic of iA Writer. Open and edit plain text, Markdown, and Word documents in a distraction-free, centered writing environment.
+A document editor for macOS. Open and edit plain text, Markdown, and Word documents in a distraction-free, centered writing environment.
 
 ![macOS](https://img.shields.io/badge/macOS-12.0%2B-blue) ![Architecture](https://img.shields.io/badge/arch-arm64-green) ![Version](https://img.shields.io/badge/version-1.6.0-orange)
 
@@ -13,9 +13,9 @@ A document editor for macOS — inspired by the clean aesthetic of iA Writer. Op
 - **Legacy Word** (.doc) — opens as read-only text extraction; use Save As to save as .docx or .txt
 
 ### Editor
-- **iA Writer-inspired theme** — adapts automatically to macOS dark / light mode with custom colors
+- **Adaptive theme** — adapts automatically to macOS dark / light mode with custom colors
 - **Centered writing column** — adjustable column width (300–1200 px, default 720) with auto-centering margins
-- **Markdown syntax highlighting** — headers, code blocks, bold, italic, blockquotes with iA Writer accent colors
+- **Markdown syntax highlighting** — headers, code blocks, bold, italic, blockquotes with accent colors
 - **Edit / Preview toggle** — switch between raw Markdown and rendered preview in the same pane (Cmd+\\)
 - **Formatting toolbar** — Bold, Italic, Underline, Strikethrough, alignment buttons, and Heading Style popup (DOCX mode only)
 - **Typewriter mode** — cursor stays vertically centered as you type (View > Typewriter Mode or Cmd+Shift+T)
