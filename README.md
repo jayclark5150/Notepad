@@ -145,4 +145,4 @@ See `buildme.md` for notarization steps.
 
 ## License
 
-All rights reserved.
+MIT — see [LICENSE](LICENSE).
