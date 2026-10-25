@@ -91,7 +91,23 @@ When you open a `.docx` file the app loads it as native rich text using `NSAttri
 
 Complex formatting (tables, images, comments) is preserved on round-trip (the app doesn't alter what it doesn't edit). Dark mode automatically adjusts near-black DOCX text colors so they are readable.
 
-## Build
+## Install
+
+Open Terminal and run:
+
+```bash
+brew install --cask jayclark5150/tap/notepad
+```
+
+Because the app is ad-hoc signed, Gatekeeper will block it on first launch. After install, run this once in Terminal:
+
+```bash
+xattr -cr /Applications/Notepad.app
+```
+
+Then open Notepad normally from `/Applications` or Spotlight.
+
+## Build from source
 
 Requires macOS 12.0+, Apple Silicon (arm64), and Xcode Command Line Tools (`xcode-select --install`).
 
