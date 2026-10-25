@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: macos-14  # Apple Silicon (arm64)
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate icon
+        run: bash make_icon.sh
+
+      - name: Build app
+        run: make
+
+      - name: Zip app
+        run: zip -r --symlinks Notepad.zip Notepad.app
+
+      - name: Parse version and SHA256
+        id: meta
+        run: |
+          echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+          echo "sha256=$(shasum -a 256 Notepad.zip | awk '{print $1}')" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub release
+        run: |
+          gh release create "$GITHUB_REF_NAME" Notepad.zip \
+            --title "Notepad $GITHUB_REF_NAME" \
+            --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update homebrew tap
+        run: |
+          git clone https://x-access-token:${{ secrets.TAP_TOKEN }}@github.com/jayclark5150/homebrew-tap.git
+          cd homebrew-tap
+          sed -i '' \
+            -e 's/version ".*"/version "${{ steps.meta.outputs.version }}"/' \
+            -e 's/sha256 ".*"/sha256 "${{ steps.meta.outputs.sha256 }}"/' \
+            Casks/notepad.rb
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/notepad.rb
+          git commit -m "Update Notepad cask to ${{ steps.meta.outputs.version }}"
+          git push
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
