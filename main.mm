@@ -146,6 +146,9 @@ static const CGFloat kRulerWidth = 50.0;
 @property (nonatomic, assign) NSUInteger     lastFoundLocation;
 - (instancetype)initWithTargetTextView:(NSTextView *)tv;
 - (void)showPanel;
+- (IBAction)findNext:(id)sender;
+- (IBAction)findPrevious:(id)sender;
+- (void)setFindString:(NSString *)string;
 @end
 
 @implementation FindReplaceController
@@ -288,6 +291,38 @@ static const CGFloat kRulerWidth = 50.0;
                                                    withString:result];
         [_targetTextView didChangeText];
     }
+    _lastFoundLocation = 0;
+}
+
+- (IBAction)findPrevious:(id)sender {
+    NSString *needle = _findField.stringValue;
+    if (needle.length == 0) return;
+
+    NSString *haystack = _targetTextView.string;
+    NSRange sel = _targetTextView.selectedRange;
+    NSUInteger searchEnd = (sel.location != NSNotFound) ? sel.location : _lastFoundLocation;
+
+    NSRange found = NSMakeRange(NSNotFound, 0);
+    if (searchEnd > 0)
+        found = [haystack rangeOfString:needle
+                                options:NSCaseInsensitiveSearch | NSBackwardsSearch
+                                  range:NSMakeRange(0, searchEnd)];
+    if (found.location == NSNotFound)
+        found = [haystack rangeOfString:needle
+                                options:NSCaseInsensitiveSearch | NSBackwardsSearch
+                                  range:NSMakeRange(0, haystack.length)];
+
+    if (found.location != NSNotFound) {
+        _lastFoundLocation = found.location;
+        [_targetTextView setSelectedRange:found];
+        [_targetTextView scrollRangeToVisible:found];
+    } else {
+        NSBeep();
+    }
+}
+
+- (void)setFindString:(NSString *)string {
+    _findField.stringValue = string;
     _lastFoundLocation = 0;
 }
 
@@ -768,7 +803,19 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     NSMenuItem *prefsItem = [appMenu addItemWithTitle:@"Preferences…" action:@selector(showPreferences:) keyEquivalent:@","];
     prefsItem.target = self;
     [appMenu addItem:[NSMenuItem separatorItem]];
-    [appMenu addItemWithTitle:@"Quit Notepad" action:@selector(terminate:) keyEquivalent:@"q"];
+    NSMenuItem *servicesItem = [appMenu addItemWithTitle:@"Services" action:nil keyEquivalent:@""];
+    NSMenu *servicesMenu = [[NSMenu alloc] initWithTitle:@"Services"];
+    servicesItem.submenu = servicesMenu;
+    [NSApp setServicesMenu:servicesMenu];
+    [appMenu addItem:[NSMenuItem separatorItem]];
+    [appMenu addItemWithTitle:@"Hide Notepad"  action:@selector(hide:)                  keyEquivalent:@"h"];
+    NSMenuItem *hideOthers = [appMenu addItemWithTitle:@"Hide Others"
+                                                action:@selector(hideOtherApplications:)
+                                         keyEquivalent:@"h"];
+    hideOthers.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
+    [appMenu addItemWithTitle:@"Show All"      action:@selector(unhideAllApplications:) keyEquivalent:@""];
+    [appMenu addItem:[NSMenuItem separatorItem]];
+    [appMenu addItemWithTitle:@"Quit Notepad"  action:@selector(terminate:)             keyEquivalent:@"q"];
     appItem.submenu = appMenu;
 
     // File menu
@@ -784,6 +831,10 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
                                              action:@selector(saveDocumentAs:)
                                       keyEquivalent:@"s"];
     saveAs.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+    NSMenuItem *revertItem = [fileMenu addItemWithTitle:@"Revert to Saved"
+                                                 action:@selector(revertDocumentToSaved:)
+                                          keyEquivalent:@""];
+    revertItem.target = self;
     [fileMenu addItem:[NSMenuItem separatorItem]];
     NSMenuItem *printItem = [fileMenu addItemWithTitle:@"Print…" action:@selector(printDocument:) keyEquivalent:@"p"];
     printItem.target = self;
@@ -803,17 +854,67 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     [editMenu addItemWithTitle:@"Cut"        action:@selector(cut:)       keyEquivalent:@"x"];
     [editMenu addItemWithTitle:@"Copy"       action:@selector(copy:)      keyEquivalent:@"c"];
     [editMenu addItemWithTitle:@"Paste"      action:@selector(paste:)     keyEquivalent:@"v"];
+    NSMenuItem *pasteMatchItem = [editMenu addItemWithTitle:@"Paste and Match Style"
+                                                     action:@selector(pasteAsPlainText:)
+                                              keyEquivalent:@"v"];
+    pasteMatchItem.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
     [editMenu addItemWithTitle:@"Select All" action:@selector(selectAll:) keyEquivalent:@"a"];
     [editMenu addItem:[NSMenuItem separatorItem]];
-    NSMenuItem *findItem = [editMenu addItemWithTitle:@"Find & Replace…"
-                                               action:@selector(showFindReplace:)
-                                        keyEquivalent:@"f"];
-    findItem.target = self;
+
+    // Find submenu
+    NSMenuItem *findItem = [editMenu addItemWithTitle:@"Find" action:nil keyEquivalent:@""];
+    NSMenu *findMenu = [[NSMenu alloc] initWithTitle:@"Find"];
+    NSMenuItem *findPanelItem = [findMenu addItemWithTitle:@"Find…"
+                                                    action:@selector(showFindReplace:)
+                                             keyEquivalent:@"f"];
+    findPanelItem.target = self;
+    NSMenuItem *findNextItem = [findMenu addItemWithTitle:@"Find Next"
+                                                   action:@selector(findNextOccurrence:)
+                                            keyEquivalent:@"g"];
+    findNextItem.target = self;
+    NSMenuItem *findPrevItem = [findMenu addItemWithTitle:@"Find Previous"
+                                                   action:@selector(findPreviousOccurrence:)
+                                            keyEquivalent:@"G"];
+    findPrevItem.target = self;
+    NSMenuItem *useSelItem = [findMenu addItemWithTitle:@"Use Selection for Find"
+                                                 action:@selector(useSelectionForFind:)
+                                          keyEquivalent:@"e"];
+    useSelItem.target = self;
+    NSMenuItem *jumpSelItem = [findMenu addItemWithTitle:@"Jump to Selection"
+                                                  action:@selector(jumpToSelection:)
+                                           keyEquivalent:@"j"];
+    jumpSelItem.target = self;
+    findItem.submenu = findMenu;
     [editMenu addItem:[NSMenuItem separatorItem]];
-    NSMenuItem *spellItem = [editMenu addItemWithTitle:@"Check Spelling While Typing"
-                                               action:@selector(toggleSpellChecking:)
-                                        keyEquivalent:@""];
-    spellItem.target = self;
+
+    // Spelling and Grammar submenu
+    NSMenuItem *spellingItem = [editMenu addItemWithTitle:@"Spelling and Grammar" action:nil keyEquivalent:@""];
+    NSMenu *spellingMenu = [[NSMenu alloc] initWithTitle:@"Spelling and Grammar"];
+    [spellingMenu addItemWithTitle:@"Show Spelling and Grammar" action:@selector(showGuessPanel:) keyEquivalent:@":"];
+    [spellingMenu addItemWithTitle:@"Check Document Now"        action:@selector(checkSpelling:)  keyEquivalent:@";"];
+    [spellingMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *spellCheckItem = [spellingMenu addItemWithTitle:@"Check Spelling While Typing"
+                                                         action:@selector(toggleSpellChecking:)
+                                                  keyEquivalent:@""];
+    spellCheckItem.target = self;
+    [spellingMenu addItemWithTitle:@"Check Grammar With Spelling"    action:@selector(toggleGrammarChecking:)             keyEquivalent:@""];
+    [spellingMenu addItemWithTitle:@"Correct Spelling Automatically" action:@selector(toggleAutomaticSpellingCorrection:) keyEquivalent:@""];
+    spellingItem.submenu = spellingMenu;
+
+    // Transformations submenu
+    NSMenuItem *transformItem = [editMenu addItemWithTitle:@"Transformations" action:nil keyEquivalent:@""];
+    NSMenu *transformMenu = [[NSMenu alloc] initWithTitle:@"Transformations"];
+    [transformMenu addItemWithTitle:@"Make Upper Case" action:@selector(uppercaseWord:)  keyEquivalent:@""];
+    [transformMenu addItemWithTitle:@"Make Lower Case" action:@selector(lowercaseWord:)  keyEquivalent:@""];
+    [transformMenu addItemWithTitle:@"Capitalize"      action:@selector(capitalizeWord:) keyEquivalent:@""];
+    transformItem.submenu = transformMenu;
+    [editMenu addItem:[NSMenuItem separatorItem]];
+
+    [editMenu addItemWithTitle:@"Start Dictation…" action:@selector(startDictation:) keyEquivalent:@""];
+    NSMenuItem *emojiItem = [editMenu addItemWithTitle:@"Emoji & Symbols"
+                                                action:@selector(orderFrontCharacterPalette:)
+                                         keyEquivalent:@" "];
+    emojiItem.keyEquivalentModifierMask = NSEventModifierFlagControl | NSEventModifierFlagCommand;
     editItem.submenu = editMenu;
 
     // Format menu
@@ -962,6 +1063,12 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
         it.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
     }
 
+    [viewMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *toolbarItem = [viewMenu addItemWithTitle:@"Show/Hide Toolbar"
+                                                  action:@selector(toggleToolbarShown:)
+                                           keyEquivalent:@"t"];
+    toolbarItem.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
+
     viewItem.submenu = viewMenu;
 
     // Window menu
@@ -979,7 +1086,6 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     windowItem.submenu = windowMenu;
     [NSApp setWindowsMenu:windowMenu];
 
-    (void)findItem;
     (void)boldFmt; (void)italicFmt; (void)underlineFmt; (void)strikeFmt;
     (void)alignLeftFmt; (void)alignCenterFmt; (void)alignRightFmt;
     (void)fontPanelItem;
@@ -1261,6 +1367,50 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
 
 - (IBAction)showFindReplace:(id)sender {
     [_findReplace showPanel];
+}
+
+- (IBAction)findNextOccurrence:(id)sender {
+    if (_findReplace.findField.stringValue.length == 0) { [_findReplace showPanel]; return; }
+    [_findReplace findNext:sender];
+}
+
+- (IBAction)findPreviousOccurrence:(id)sender {
+    if (_findReplace.findField.stringValue.length == 0) { [_findReplace showPanel]; return; }
+    [_findReplace findPrevious:sender];
+}
+
+- (IBAction)useSelectionForFind:(id)sender {
+    NSRange sel = _textView.selectedRange;
+    if (sel.length == 0) return;
+    [_findReplace setFindString:[_textView.string substringWithRange:sel]];
+    [_findReplace showPanel];
+}
+
+- (IBAction)jumpToSelection:(id)sender {
+    [_textView scrollRangeToVisible:_textView.selectedRange];
+}
+
+- (IBAction)revertDocumentToSaved:(id)sender {
+    if (!_currentFilePath) return;
+    if (_isDirty) {
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = @"Revert to Saved";
+        alert.informativeText = [NSString stringWithFormat:
+            @"Revert to the saved version of \"%@\"? Your current changes will be lost.",
+            _currentFilePath.lastPathComponent];
+        [alert addButtonWithTitle:@"Revert"];
+        [alert addButtonWithTitle:@"Cancel"];
+        if ([alert runModal] != NSAlertFirstButtonReturn) return;
+    }
+    [self loadFileAtPath:_currentFilePath];
+}
+
+- (BOOL)validateMenuItem:(NSMenuItem *)item {
+    if (item.action == @selector(revertDocumentToSaved:)) return _currentFilePath != nil;
+    if (item.action == @selector(findNextOccurrence:) ||
+        item.action == @selector(findPreviousOccurrence:))
+        return _findReplace.findField.stringValue.length > 0;
+    return YES;
 }
 
 // ── Dark Mode DOCX Color Fix ──────────────────────────────

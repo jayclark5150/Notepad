@@ -2,7 +2,7 @@
 
 A document editor for macOS — inspired by the clean aesthetic of iA Writer. Open and edit plain text, Markdown, and Word documents in a distraction-free, centered writing environment.
 
-![macOS](https://img.shields.io/badge/macOS-12.0%2B-blue) ![Architecture](https://img.shields.io/badge/arch-arm64-green) ![Version](https://img.shields.io/badge/version-1.5.0-orange)
+![macOS](https://img.shields.io/badge/macOS-12.0%2B-blue) ![Architecture](https://img.shields.io/badge/arch-arm64-green) ![Version](https://img.shields.io/badge/version-1.6.0-orange)
 
 ## Features
 
@@ -23,7 +23,12 @@ A document editor for macOS — inspired by the clean aesthetic of iA Writer. Op
 - **Drag & drop** — drag any supported file onto the window to open it
 - **Open Recent** — File > Open Recent submenu with full history
 - Line number gutter (toggle with Cmd+Shift+L, off by default)
-- Find & Replace (case-insensitive, wrap-around)
+- Find & Replace with Find Next (⌘G), Find Previous (⌘⇧G), Use Selection for Find (⌘E), Jump to Selection (⌘J)
+- Revert to Saved (File menu)
+- Paste and Match Style (⌘⇧V)
+- Text Transformations — Make Upper Case, Make Lower Case, Capitalize (Edit > Transformations)
+- Spelling and Grammar submenu with per-document check, grammar toggle, and auto-correct
+- Start Dictation and Emoji & Symbols (Edit menu)
 - Font selection: Monospaced, Sans-Serif, Serif (via Preferences or Format > Show Fonts)
 - Adjustable font size 8–72 pt (Cmd++ / Cmd+-)
 - Adjustable line spacing
@@ -56,15 +61,26 @@ A document editor for macOS — inspired by the clean aesthetic of iA Writer. Op
 | Print | Cmd+P |
 | Minimize | Cmd+M |
 | Enter Full Screen | Ctrl+Cmd+F |
+| Hide Notepad | Cmd+H |
+| Hide Others | Cmd+Option+H |
 | Toggle Edit / Preview | Cmd+\\ |
 | Preferences | Cmd+, |
+| Paste and Match Style | Cmd+Shift+V |
+| Find… | Cmd+F |
+| Find Next | Cmd+G |
+| Find Previous | Cmd+Shift+G |
+| Use Selection for Find | Cmd+E |
+| Jump to Selection | Cmd+J |
+| Show Spelling and Grammar | Cmd+: |
+| Check Document Now | Cmd+; |
+| Emoji & Symbols | Ctrl+Cmd+Space |
 | Show Fonts panel | Cmd+T |
+| Show/Hide Toolbar | Cmd+Option+T |
 | Bold | Cmd+B |
 | Italic | Cmd+I |
 | Underline | Cmd+U |
 | Toggle line numbers | Cmd+Shift+L |
 | Typewriter mode | Cmd+Shift+T |
-| Find & Replace | Cmd+F |
 | Font bigger / smaller | Cmd++ / Cmd+- |
 | Preview bigger / smaller | Cmd+Option+= / Cmd+Option+- |
 | Preview actual size | Cmd+Option+0 |
