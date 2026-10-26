@@ -1,5 +1,9 @@
 # Changelog
 
+## [2.1.0] - 2026-10-25
+- **Image paste in Markdown** — paste a screenshot or image (Cmd+V) into a `.md` file; the image is saved as `assets/image-YYYYMMDD-HHmmss.png` next to the document and a `![](assets/…)` reference is inserted at the cursor; images render in the Markdown preview
+- Remove app sandbox (was blocking asset folder creation next to the document)
+
 ## [2.0.1] - 2026-10-25
 - Fix link handler ignoring `claimedInline`, causing links inside bold/code to become invisible
 - Fix strikethrough not claiming its range, allowing links inside `~~…~~` to be double-processed

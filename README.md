@@ -2,7 +2,7 @@
 
 A document editor for macOS. Open and edit plain text, Markdown, and Word documents in a distraction-free, centered writing environment with seamless live Markdown rendering.
 
-![macOS](https://img.shields.io/badge/macOS-12.0%2B-blue) ![Architecture](https://img.shields.io/badge/arch-arm64-green) ![Version](https://img.shields.io/badge/version-2.0.1-orange)
+![macOS](https://img.shields.io/badge/macOS-12.0%2B-blue) ![Architecture](https://img.shields.io/badge/arch-arm64-green) ![Version](https://img.shields.io/badge/version-2.1.0-orange)
 
 ## Features
 
@@ -16,6 +16,7 @@ A document editor for macOS. Open and edit plain text, Markdown, and Word docume
 - **Adaptive theme** — adapts automatically to macOS dark / light mode with custom colors
 - **Centered writing column** — adjustable column width (300–1200 px, default 720) with auto-centering margins
 - **Seamless live Markdown rendering** — syntax markers hide as you write and reappear when the cursor returns; headings render at size, bold and italic apply in place, code spans use monospace — no mode switch needed
+- **Image paste** — paste a screenshot or image (Cmd+V) into a `.md` file; saved as `assets/image-YYYYMMDD-HHmmss.png` next to the document with a `![](assets/…)` reference inserted at the cursor; renders in preview
 - **Rendered preview** — full HTML preview via Cmd+\\ for a print-ready view
 - **Formatting toolbar** — Bold, Italic, Underline, Strikethrough, alignment buttons, and Heading Style popup (DOCX mode only)
 - **Typewriter mode** — cursor stays vertically centered as you type (View > Typewriter Mode or Cmd+Shift+T)
@@ -137,7 +138,6 @@ See `buildme.md` for notarization steps.
 
 ## Security
 
-- App Sandbox with user-selected file access
 - Hardened Runtime enabled
 - Code signed at build time
 - Large file warning (100 MB+)

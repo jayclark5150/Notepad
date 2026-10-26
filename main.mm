@@ -355,6 +355,41 @@ static const CGFloat kRulerWidth = 50.0;
 @end
 
 // ============================================================
+// MARK: - Custom Text View (image-paste intercept)
+// ============================================================
+
+@protocol NPTextViewDelegate <NSTextViewDelegate>
+- (BOOL)textViewHandleImagePaste:(NSTextView *)textView;
+@end
+
+@interface NPTextView : NSTextView
+@end
+
+@implementation NPTextView
+
+- (BOOL)validateUserInterfaceItem:(id<NSValidatedUserInterfaceItem>)item {
+    if (item.action == @selector(paste:)) {
+        NSPasteboard *pb = [NSPasteboard generalPasteboard];
+        if ([pb canReadItemWithDataConformingToTypes:@[NSPasteboardTypePNG,
+                                                       NSPasteboardTypeTIFF]]) {
+            return YES;
+        }
+    }
+    return [super validateUserInterfaceItem:item];
+}
+
+- (void)paste:(id)sender {
+    id<NPTextViewDelegate> d = (id<NPTextViewDelegate>)self.delegate;
+    if ([d respondsToSelector:@selector(textViewHandleImagePaste:)] &&
+        [d textViewHandleImagePaste:self]) {
+        return;
+    }
+    [super paste:sender];
+}
+
+@end
+
+// ============================================================
 // MARK: - Drop Target View
 // ============================================================
 
@@ -393,7 +428,7 @@ static const CGFloat kRulerWidth = 50.0;
 // MARK: - Application Delegate / Main Editor Window
 // ============================================================
 
-@interface AppDelegate : NSObject <NSApplicationDelegate, NSTextViewDelegate, NSWindowDelegate, WKScriptMessageHandler, NSToolbarDelegate, NSMenuDelegate, DropTargetDelegate>
+@interface AppDelegate : NSObject <NSApplicationDelegate, NPTextViewDelegate, NSWindowDelegate, WKScriptMessageHandler, NSToolbarDelegate, NSMenuDelegate, DropTargetDelegate>
 @property (nonatomic, strong) NSWindow              *window;
 @property (nonatomic, strong) NSTextView            *textView;
 @property (nonatomic, strong) NSScrollView          *scrollView;
@@ -571,7 +606,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     [ts addLayoutManager:lm];
     [lm addTextContainer:tc];
 
-    _textView = [[NSTextView alloc] initWithFrame:
+    _textView = [[NPTextView alloc] initWithFrame:
                     NSMakeRect(0, 0, contentSize.width, contentSize.height)
                                     textContainer:tc];
     _textView.autoresizingMask             = NSViewWidthSizable;
@@ -1121,6 +1156,75 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
 }
 
 // ── NSTextViewDelegate ────────────────────────────────────
+
+- (BOOL)textViewHandleImagePaste:(NSTextView *)textView {
+    (void)textView;
+    if (![_fileFormat isEqualToString:@"md"]) return NO;
+
+    NSPasteboard *pb = [NSPasteboard generalPasteboard];
+    NSData *imgData = nil;
+    BOOL isTIFF = NO;
+
+    if ([pb canReadItemWithDataConformingToTypes:@[NSPasteboardTypePNG]]) {
+        imgData = [pb dataForType:NSPasteboardTypePNG];
+    } else if ([pb canReadItemWithDataConformingToTypes:@[NSPasteboardTypeTIFF]]) {
+        imgData = [pb dataForType:NSPasteboardTypeTIFF];
+        isTIFF = YES;
+    }
+
+    if (!imgData) return NO;
+
+    if (!_currentFilePath) {
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText     = @"Save Document First";
+        alert.informativeText = @"Save your document before pasting images so the assets folder can be created next to it.";
+        [alert addButtonWithTitle:@"OK"];
+        [alert runModal];
+        return YES;
+    }
+
+    NSString *docDir    = [_currentFilePath stringByDeletingLastPathComponent];
+    NSString *assetsDir = [docDir stringByAppendingPathComponent:@"assets"];
+    NSError  *err       = nil;
+    [[NSFileManager defaultManager] createDirectoryAtPath:assetsDir
+                                withIntermediateDirectories:YES
+                                                 attributes:nil
+                                                      error:&err];
+    if (err) { [self showError:@"Could not create assets folder."]; return YES; }
+
+    NSData *pngData = imgData;
+    if (isTIFF) {
+        NSBitmapImageRep *rep = [NSBitmapImageRep imageRepWithData:imgData];
+        pngData = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+    }
+    if (!pngData) { [self showError:@"Could not convert image to PNG."]; return YES; }
+
+    NSDateFormatter *df = [[NSDateFormatter alloc] init];
+    df.dateFormat = @"yyyyMMdd-HHmmss";
+    NSString *base     = [NSString stringWithFormat:@"image-%@", [df stringFromDate:[NSDate date]]];
+    NSString *filename = [base stringByAppendingPathExtension:@"png"];
+    NSString *filepath = [assetsDir stringByAppendingPathComponent:filename];
+    NSInteger seq = 1;
+    while ([[NSFileManager defaultManager] fileExistsAtPath:filepath]) {
+        filename = [[NSString stringWithFormat:@"%@-%ld", base, (long)seq++]
+                       stringByAppendingPathExtension:@"png"];
+        filepath = [assetsDir stringByAppendingPathComponent:filename];
+    }
+
+    if (![pngData writeToFile:filepath atomically:YES]) {
+        [self showError:@"Could not save image to assets folder."];
+        return YES;
+    }
+
+    NSString *mdRef = [NSString stringWithFormat:@"![](assets/%@)", filename];
+    NSRange sel = _textView.selectedRange;
+    if ([_textView shouldChangeTextInRange:sel replacementString:mdRef]) {
+        [_textView.textStorage replaceCharactersInRange:sel withString:mdRef];
+        [_textView didChangeText];
+        [_textView setSelectedRange:NSMakeRange(sel.location + mdRef.length, 0)];
+    }
+    return YES;
+}
 
 - (void)textDidChange:(NSNotification *)note {
     if (!_isDirty) {
@@ -1828,7 +1932,11 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
         codeBg, codeFg,
         body];
 
-    [_previewWebView loadHTMLString:html baseURL:nil];
+    NSURL *baseURL = _currentFilePath
+        ? [NSURL fileURLWithPath:[_currentFilePath stringByDeletingLastPathComponent]
+                     isDirectory:YES]
+        : nil;
+    [_previewWebView loadHTMLString:html baseURL:baseURL];
 }
 
 - (void)setPreviewFontSizeTo:(CGFloat)size {
