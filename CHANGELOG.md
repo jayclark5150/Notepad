@@ -1,5 +1,8 @@
 # Changelog
 
+## [2.1.1] - 2026-10-25
+- Fix code text color in preview — inline code and fenced blocks now use the body text color instead of amber/brown, ensuring readability in both light and dark mode
+
 ## [2.1.0] - 2026-10-25
 - **Image paste in Markdown** — paste a screenshot or image (Cmd+V) into a `.md` file; the image is saved as `assets/image-YYYYMMDD-HHmmss.png` next to the document and a `![](assets/…)` reference is inserted at the cursor; images render in the Markdown preview
 - Remove app sandbox (was blocking asset folder creation next to the document)

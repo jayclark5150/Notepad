@@ -1906,11 +1906,11 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
         "h1,h2,h3,h4,h5,h6{font-weight:700;margin-top:1.4em;margin-bottom:.3em;color:%@;}"
         "h1{font-size:1.7em;}h2{font-size:1.3em;}h3{font-size:1.1em;}"
         "p{margin:.5em 0;}"
-        "code{font-family:Menlo,Monaco,monospace;background:%@;color:%@;padding:1px 5px;font-size:.88em;border-radius:4px;}"
+        "code{font-family:Menlo,Monaco,monospace;background:%@;color:inherit;padding:1px 5px;font-size:.88em;border-radius:4px;}"
         "hr{border:none;border-top:1px solid %@;margin:1.2em 0;}"
         "del{opacity:.55;}"
         ".code-block{position:relative;border-radius:8px;margin:1em 0;overflow:hidden;}"
-        ".code-pre{margin:0;padding:14px 16px;font-family:Menlo,Monaco,monospace;font-size:.88em;overflow-x:auto;white-space:pre-wrap;overflow-wrap:break-word;background:%@;color:%@;}"
+        ".code-pre{margin:0;padding:14px 16px;font-family:Menlo,Monaco,monospace;font-size:.88em;overflow-x:auto;white-space:pre-wrap;overflow-wrap:break-word;background:%@;color:inherit;}"
         ".copy-btn{position:absolute;top:8px;right:8px;border:none;border-radius:6px;"
         "padding:3px 10px;font-size:11px;cursor:pointer;background:rgba(128,128,128,0.25);"
         "color:inherit;font-family:-apple-system,sans-serif;opacity:0;transition:opacity 0.15s;}"
@@ -2069,8 +2069,8 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
             [out appendFormat:
                 @"<div class='code-block'>"
                 "<button class='copy-btn' onclick='copyCode(this)'>Copy</button>"
-                "<pre class='code-pre' style='background:%@;color:%@;'>",
-                codeBg, codeFg];
+                "<pre class='code-pre' style='background:%@;'>",
+                codeBg];
             inFence = YES;
             continue;
         }
