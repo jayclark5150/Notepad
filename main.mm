@@ -787,9 +787,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
 }
 
 - (NSColor *)iaCodeColor {
-    return [self isDarkMode]
-        ? [NSColor colorWithRed:0xE8/255.0 green:0xA8/255.0 blue:0x57/255.0 alpha:1.0]
-        : [NSColor colorWithRed:0xA0/255.0 green:0x52/255.0 blue:0x2D/255.0 alpha:1.0];
+    return [self iaTextColor];
 }
 
 - (void)applyTheme {
@@ -2292,7 +2290,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     NSFont  *baseFont   = [self currentFont];
     NSColor *headColor  = [self iaHeadingColor];
     NSColor *codeColor  = [self iaCodeColor];
-    NSColor *dimColor   = [NSColor tertiaryLabelColor];
+    NSColor *dimColor   = [NSColor secondaryLabelColor];
     NSColor *quoteColor = [NSColor secondaryLabelColor];
 
     NSFontManager *fm      = [NSFontManager sharedFontManager];
