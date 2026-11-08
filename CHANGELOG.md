@@ -1,5 +1,9 @@
 # Changelog
 
+## [2.2.1] - 2026-11-08
+- Fix code text in editor showing as gray — code content now uses body text color (pure black/white); monospace font distinguishes it from prose
+- Raise syntax marker color from `tertiaryLabelColor` to `secondaryLabelColor` for better visibility against pure white/black backgrounds
+
 ## [2.2.0] - 2026-11-08
 - **Pandoc export** — File › Export submenu with HTML, PDF, Word (.docx), ePub, and LaTeX; requires `brew install pandoc`
 - **Fix**: Markdown preview was showing `#E8E6E3` instead of note content (misaligned format arguments)
