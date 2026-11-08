@@ -37,7 +37,8 @@ LDFLAGS  = -arch $(ARCH) \
            -isysroot $(SDK) \
            -mmacosx-version-min=$(MIN_VER) \
            -framework Cocoa \
-           -framework WebKit
+           -framework WebKit \
+           -framework UniformTypeIdentifiers
 
 .PHONY: all run clean
 

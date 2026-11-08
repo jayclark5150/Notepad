@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.2.0] - 2026-11-08
+- **Pandoc export** — File › Export submenu with HTML, PDF, Word (.docx), ePub, and LaTeX; requires `brew install pandoc`
+- **Fix**: Markdown preview was showing `#E8E6E3` instead of note content (misaligned format arguments)
+- **Gutters**: editor and preview gutters capped at 48 px per side; text fills wide windows instead of leaving large empty margins
+- **Colors**: editor and preview now use pure black-on-white (light) and white-on-black (dark)
+
 ## [2.1.1] - 2026-10-25
 - Fix code text color in preview — inline code and fenced blocks now use the body text color instead of amber/brown, ensuring readability in both light and dark mode
 

@@ -7,6 +7,7 @@
 #import <Cocoa/Cocoa.h>
 #import <Foundation/Foundation.h>
 #import <WebKit/WebKit.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 // ============================================================
 // MARK: - NSUserDefaults Keys
@@ -468,6 +469,7 @@ static const CGFloat   kPreviewFontSizeDefault = 15.0;
 static const CGFloat   kPreviewFontSizeMin     = 8.0;
 static const CGFloat   kPreviewFontSizeMax     = 72.0;
 static const CGFloat   kVInset                 = 24.0;
+static const CGFloat   kHInsetMax              = 48.0;
 static NSString *const kColumnWidthKey         = @"ColumnWidth";
 static const CGFloat   kColumnWidthDefault     = 720.0;
 static const CGFloat   kColumnWidthMin         = 300.0;
@@ -770,16 +772,12 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
 }
 
 - (NSColor *)iaBgColor {
-    return [self isDarkMode]
-        ? [NSColor colorWithRed:0x1A/255.0 green:0x1A/255.0 blue:0x1A/255.0 alpha:1.0]
-        : [NSColor whiteColor];
+    return [self isDarkMode] ? [NSColor blackColor] : [NSColor whiteColor];
 }
 
 - (NSColor *)iaTextColor {
     if (_customTextColor) return _customTextColor;
-    return [self isDarkMode]
-        ? [NSColor colorWithRed:0xD7/255.0 green:0xD5/255.0 blue:0xCF/255.0 alpha:1.0]
-        : [NSColor colorWithRed:0x1A/255.0 green:0x1A/255.0 blue:0x1A/255.0 alpha:1.0];
+    return [self isDarkMode] ? [NSColor whiteColor] : [NSColor blackColor];
 }
 
 - (NSColor *)iaHeadingColor {
@@ -819,7 +817,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
 
 - (void)updateTextContainerInset {
     CGFloat availW = _scrollView.contentSize.width;
-    CGFloat hInset = MAX(0.0, (availW - _columnWidth) / 2.0);
+    CGFloat hInset = MIN(kHInsetMax, MAX(0.0, (availW - _columnWidth) / 2.0));
     _textView.textContainerInset = NSMakeSize(hInset, kVInset);
 }
 
@@ -874,6 +872,16 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     [fileMenu addItem:[NSMenuItem separatorItem]];
     NSMenuItem *printItem = [fileMenu addItemWithTitle:@"Print…" action:@selector(printDocument:) keyEquivalent:@"p"];
     printItem.target = self;
+    [fileMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem *exportItem = [fileMenu addItemWithTitle:@"Export" action:nil keyEquivalent:@""];
+    NSMenu *exportMenu = [[NSMenu alloc] initWithTitle:@"Export"];
+    [exportMenu addItemWithTitle:@"Export as HTML…"  action:@selector(exportAsHTML:)  keyEquivalent:@""];
+    [exportMenu addItemWithTitle:@"Export as PDF…"   action:@selector(exportAsPDF:)   keyEquivalent:@""];
+    [exportMenu addItemWithTitle:@"Export as Word…"  action:@selector(exportAsWord:)  keyEquivalent:@""];
+    [exportMenu addItemWithTitle:@"Export as ePub…"  action:@selector(exportAsEPUB:)  keyEquivalent:@""];
+    [exportMenu addItemWithTitle:@"Export as LaTeX…" action:@selector(exportAsLatex:) keyEquivalent:@""];
+    for (NSMenuItem *it in exportMenu.itemArray) it.target = self;
+    exportItem.submenu = exportMenu;
     [fileMenu addItem:[NSMenuItem separatorItem]];
     NSMenuItem *recentItem = [fileMenu addItemWithTitle:@"Open Recent" action:nil keyEquivalent:@""];
     _recentSubmenu = [[NSMenu alloc] initWithTitle:@"Open Recent"];
@@ -1529,6 +1537,12 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     if (item.action == @selector(findNextOccurrence:) ||
         item.action == @selector(findPreviousOccurrence:))
         return _findReplace.findField.stringValue.length > 0;
+    if (item.action == @selector(exportAsHTML:)  ||
+        item.action == @selector(exportAsPDF:)   ||
+        item.action == @selector(exportAsWord:)  ||
+        item.action == @selector(exportAsEPUB:)  ||
+        item.action == @selector(exportAsLatex:))
+        return ![self isRichTextMode];
     return YES;
 }
 
@@ -1890,11 +1904,10 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     if (_editMode || [self isRichTextMode]) return;
 
     BOOL dark = [self isDarkMode];
-    NSString *fg           = dark ? @"#D7D5CF" : @"#1A1A1A";
-    NSString *bg           = dark ? @"#1A1A1A" : @"#FFFFFF";
+    NSString *fg           = dark ? @"#FFFFFF" : @"#000000";
+    NSString *bg           = dark ? @"#000000" : @"#FFFFFF";
     NSString *headingColor = dark ? @"#7FBBE0" : @"#2458A5";
     NSString *codeBg       = dark ? @"#242424" : @"#E8E6E3";
-    NSString *codeFg       = dark ? @"#E8A857" : @"#A0522D";
     NSString *borderColor  = dark ? @"#333333" : @"#C8C6C3";
 
     NSString *body = [self markdownToHTML:_textView.string];
@@ -1902,7 +1915,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     NSString *html = [NSString stringWithFormat:
         @"<html><head><meta charset='utf-8'><style>"
         "body{font-family:-apple-system,sans-serif;font-size:%gpx;line-height:1.7;"
-        "max-width:720px;margin:0 auto;padding:32px 24px;color:%@;background:%@;}"
+        "max-width:none;margin:0;padding:32px 48px;color:%@;background:%@;}"
         "h1,h2,h3,h4,h5,h6{font-weight:700;margin-top:1.4em;margin-bottom:.3em;color:%@;}"
         "h1{font-size:1.7em;}h2{font-size:1.3em;}h3{font-size:1.1em;}"
         "p{margin:.5em 0;}"
@@ -1927,9 +1940,9 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
         "</script>"
         "</body></html>",
         (double)_previewFontSize, fg, bg, headingColor,
-        codeBg, codeFg,
+        codeBg,
         borderColor,
-        codeBg, codeFg,
+        codeBg,
         body];
 
     NSURL *baseURL = _currentFilePath
@@ -2027,7 +2040,6 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
 - (NSString *)markdownToHTML:(NSString *)rawMD {
     BOOL dark = [self isDarkMode];
     NSString *codeBg     = dark ? @"#242424" : @"#E8E6E3";
-    NSString *codeFg     = dark ? @"#E8A857" : @"#A0522D";
     NSString *tableBdr   = dark ? @"#444444" : @"#C8C6C3";
     NSString *borderColor= dark ? @"#444444" : @"#C8C6C3";
     NSString *checkColor = dark ? @"#7FBBE0" : @"#2458A5";
@@ -2683,6 +2695,114 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     [alert addButtonWithTitle:@"Don't Save"];
     [alert addButtonWithTitle:@"Cancel"];
     return alert;
+}
+
+// ── Pandoc Export ────────────────────────────────────────
+
+- (NSString *)findPandoc {
+    NSArray<NSString *> *candidates = @[
+        @"/opt/homebrew/bin/pandoc",
+        @"/usr/local/bin/pandoc",
+        @"/usr/bin/pandoc",
+    ];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (NSString *p in candidates)
+        if ([fm isExecutableFileAtPath:p]) return p;
+    return nil;
+}
+
+- (void)exportWithPandocFormat:(NSString *)pandocFormat
+                     extension:(NSString *)ext
+                   displayName:(NSString *)displayName
+                     extraArgs:(NSArray<NSString *> *)extraArgs {
+    NSString *pandocPath = [self findPandoc];
+    if (!pandocPath) {
+        [self showError:@"Pandoc is not installed.\n\nInstall it with:\n\n    brew install pandoc"];
+        return;
+    }
+
+    NSString *sourcePath = _currentFilePath;
+    NSString *tempPath   = nil;
+    if (!sourcePath) {
+        tempPath   = [NSTemporaryDirectory() stringByAppendingPathComponent:
+                      [NSString stringWithFormat:@"notepad_export_%@.md",
+                       NSProcessInfo.processInfo.globallyUniqueString]];
+        NSError *err = nil;
+        [_textView.string writeToFile:tempPath atomically:YES encoding:NSUTF8StringEncoding error:&err];
+        if (err) { [self showError:err.localizedDescription]; return; }
+        sourcePath = tempPath;
+    }
+
+    NSSavePanel *panel = [NSSavePanel savePanel];
+    UTType *uttype = [UTType typeWithFilenameExtension:ext];
+    if (uttype) panel.allowedContentTypes = @[uttype];
+    NSString *stem = _currentFilePath
+        ? _currentFilePath.lastPathComponent.stringByDeletingPathExtension
+        : @"Untitled";
+    panel.nameFieldStringValue = [stem stringByAppendingPathExtension:ext];
+
+    [panel beginSheetModalForWindow:_window completionHandler:^(NSModalResponse result) {
+        if (result != NSModalResponseOK) {
+            if (tempPath) [[NSFileManager defaultManager] removeItemAtPath:tempPath error:nil];
+            return;
+        }
+        NSString *destPath    = panel.URL.path;
+        NSString *srcSnapshot = sourcePath;
+        NSString *tmpSnapshot = tempPath;
+
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            NSMutableArray<NSString *> *args = [NSMutableArray arrayWithObjects:srcSnapshot, @"-o", destPath, nil];
+            [args addObjectsFromArray:extraArgs];
+
+            NSTask *task     = [[NSTask alloc] init];
+            task.launchPath  = pandocPath;
+            task.arguments   = args;
+            NSPipe *errPipe  = [NSPipe pipe];
+            task.standardError = errPipe;
+            [task launch];
+            [task waitUntilExit];
+
+            if (tmpSnapshot) [[NSFileManager defaultManager] removeItemAtPath:tmpSnapshot error:nil];
+
+            if (task.terminationStatus == 0) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [[NSWorkspace sharedWorkspace] selectFile:destPath inFileViewerRootedAtPath:@""];
+                });
+            } else {
+                NSData   *errData = [errPipe.fileHandleForReading readDataToEndOfFile];
+                NSString *errMsg  = [[NSString alloc] initWithData:errData encoding:NSUTF8StringEncoding]
+                                    ?: @"Unknown error.";
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [self showError:[NSString stringWithFormat:@"Export to %@ failed:\n\n%@",
+                                     displayName, errMsg]];
+                });
+            }
+        });
+    }];
+}
+
+- (IBAction)exportAsHTML:(id)sender {
+    [self exportWithPandocFormat:@"html5" extension:@"html" displayName:@"HTML"
+                       extraArgs:@[@"--standalone"]];
+}
+- (IBAction)exportAsPDF:(id)sender {
+    [self exportWithPandocFormat:@"pdf" extension:@"pdf" displayName:@"PDF"
+                       extraArgs:@[]];
+}
+- (IBAction)exportAsWord:(id)sender {
+    [self exportWithPandocFormat:@"docx" extension:@"docx" displayName:@"Word"
+                       extraArgs:@[]];
+}
+- (IBAction)exportAsEPUB:(id)sender {
+    NSString *title = _currentFilePath
+        ? _currentFilePath.lastPathComponent.stringByDeletingPathExtension
+        : @"Untitled";
+    [self exportWithPandocFormat:@"epub" extension:@"epub" displayName:@"ePub"
+                       extraArgs:@[@"--metadata", [NSString stringWithFormat:@"title:%@", title]]];
+}
+- (IBAction)exportAsLatex:(id)sender {
+    [self exportWithPandocFormat:@"latex" extension:@"tex" displayName:@"LaTeX"
+                       extraArgs:@[@"--standalone"]];
 }
 
 - (void)showError:(NSString *)message {
