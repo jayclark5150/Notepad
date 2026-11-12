@@ -395,7 +395,7 @@ static const CGFloat kRulerWidth = 50.0;
 // ============================================================
 
 @protocol DropTargetDelegate <NSObject>
-- (BOOL)loadFileAtPath:(NSString *)path;
+- (void)dropTargetDidReceiveFile:(NSString *)path;
 @end
 
 @interface DropTargetView : NSView
@@ -418,7 +418,7 @@ static const CGFloat kRulerWidth = 50.0;
     NSArray *urls = [sender.draggingPasteboard readObjectsForClasses:@[[NSURL class]]
         options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
     if (urls.firstObject) {
-        [_dropDelegate loadFileAtPath:[(NSURL *)urls.firstObject path]];
+        [_dropDelegate dropTargetDidReceiveFile:[(NSURL *)urls.firstObject path]];
         return YES;
     }
     return NO;
@@ -445,6 +445,7 @@ static const CGFloat kRulerWidth = 50.0;
 // Preview
 @property (nonatomic, strong) WKWebView             *previewWebView;
 @property (nonatomic, strong) NSTimer               *previewTimer;
+@property (nonatomic, strong) NSTimer               *formatTimer;
 @property (nonatomic, strong) NSMenuItem            *previewMenuItem;
 @property (nonatomic, assign) BOOL                   editMode;          // YES=editor, NO=preview
 @property (nonatomic, assign) CGFloat                previewFontSize;
@@ -1241,10 +1242,21 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     [self updateStatusBar];
     if (!_isHighlighting && ![self isRichTextMode]) {
         _suppressSelectionFormat = YES;
-        [self applyWYSIWYMFormatting];
+        [self scheduleWYSIWYMFormatting];
     }
     [self schedulePreviewUpdate];
     if (_typewriterMode && _editMode) [self scrollCursorToCenter];
+}
+
+// Coalesce reformatting so fast typing triggers one full-document pass per
+// pause instead of one per keystroke. Correctness is unchanged; only timing.
+- (void)scheduleWYSIWYMFormatting {
+    [_formatTimer invalidate];
+    _formatTimer = [NSTimer scheduledTimerWithTimeInterval:0.08
+                                                    target:self
+                                                  selector:@selector(applyWYSIWYMFormatting)
+                                                  userInfo:nil
+                                                   repeats:NO];
 }
 
 - (void)textViewDidChangeSelection:(NSNotification *)note {
@@ -1292,6 +1304,13 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     [self applyTheme];
     [self updateTitle];
     [self updateStatusBar];
+}
+
+- (void)dropTargetDidReceiveFile:(NSString *)path {
+    // Dropping a file replaces the current document, so honor the same
+    // unsaved-changes guard that Open and "Open With" use.
+    if (_isDirty && ![self confirmDiscardWithAction:@"open another file"]) return;
+    [self loadFileAtPath:path];
 }
 
 - (BOOL)loadFileAtPath:(NSString *)path {
@@ -1344,9 +1363,16 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
 
     // Plain text / Markdown
     _fileFormat = ([ext isEqualToString:@"md"] || [ext isEqualToString:@"markdown"]) ? @"md" : @"txt";
-    NSString *text = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:&err];
-    if (err) {
-        text = nil; err = nil;
+    // Try the system's encoding detection first (handles BOMs, UTF-16, etc.),
+    // then fall back to UTF-8 and finally Latin-1 (which accepts any byte stream).
+    NSStringEncoding usedEncoding = 0;
+    NSString *text = [NSString stringWithContentsOfFile:path usedEncoding:&usedEncoding error:&err];
+    if (!text) {
+        err = nil;
+        text = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:&err];
+    }
+    if (!text) {
+        err = nil;
         text = [NSString stringWithContentsOfFile:path encoding:NSISOLatin1StringEncoding error:&err];
     }
     if (err || !text) {
@@ -1716,169 +1742,6 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     [self updateTextContainerInset];
 }
 
-// ── (DOCX conversion methods removed — now using NSAttributedString natively) ──
-
-- (NSString *)attributedStringToMarkdown_unused:(NSAttributedString *)attrStr {
-    NSMutableString *md  = [NSMutableString string];
-    NSString        *str = attrStr.string;
-    NSUInteger       len = str.length;
-    NSUInteger       pos = 0;
-
-    while (pos < len) {
-        NSUInteger paraEnd, paraContentsEnd;
-        [str getParagraphStart:NULL end:&paraEnd contentsEnd:&paraContentsEnd
-                      forRange:NSMakeRange(pos, 0)];
-
-        NSUInteger contentLen = paraContentsEnd - pos;
-        if (contentLen == 0) {
-            [md appendString:@"\n"];
-            pos = paraEnd;
-            continue;
-        }
-
-        // Sample font at paragraph start to detect heading level
-        NSFont *paraFont = [attrStr attribute:NSFontAttributeName atIndex:pos effectiveRange:nil];
-        CGFloat ptSize = paraFont ? paraFont.pointSize : 12.0;
-        NSString *headPrefix = @"";
-        if      (ptSize >= 22) headPrefix = @"# ";
-        else if (ptSize >= 17) headPrefix = @"## ";
-        else if (ptSize >= 14) headPrefix = @"### ";
-
-        [md appendString:headPrefix];
-
-        NSRange contentRange = NSMakeRange(pos, contentLen);
-        [attrStr enumerateAttributesInRange:contentRange options:0
-                                 usingBlock:^(NSDictionary *attrs, NSRange runRange, BOOL *stop) {
-            (void)stop;
-            NSFont *runFont = attrs[NSFontAttributeName];
-            NSFontSymbolicTraits traits = runFont ? runFont.fontDescriptor.symbolicTraits : 0;
-            BOOL bold   = (traits & NSFontBoldTrait)   != 0;
-            BOOL italic = (traits & NSFontItalicTrait) != 0;
-            NSString *text = [str substringWithRange:runRange];
-            if (!text.length) return;
-            if (headPrefix.length) {
-                // Heading — don't re-wrap in bold markers
-                [md appendString:text];
-            } else if (bold && italic) {
-                [md appendFormat:@"***%@***", text];
-            } else if (bold) {
-                [md appendFormat:@"**%@**", text];
-            } else if (italic) {
-                [md appendFormat:@"*%@*", text];
-            } else {
-                [md appendString:text];
-            }
-        }];
-
-        [md appendString:@"\n"];
-        pos = paraEnd;
-    }
-
-    return [md copy];
-}
-
-- (NSMutableAttributedString *)markdownToAttributedString_unused:(NSString *)markdown {
-    NSMutableAttributedString *result = [[NSMutableAttributedString alloc] init];
-    NSFont *bodyFont = [NSFont systemFontOfSize:12.0 weight:NSFontWeightRegular];
-
-    NSArray<NSString *> *lines = [markdown componentsSeparatedByString:@"\n"];
-    for (NSUInteger i = 0; i < lines.count; i++) {
-        NSString *line = lines[i];
-
-        // Detect heading
-        NSUInteger h = 0;
-        while (h < 6 && h < line.length && [line characterAtIndex:h] == '#') h++;
-
-        NSMutableAttributedString *paraAS;
-        BOOL isLast = (i == lines.count - 1);
-        NSString *sep = isLast ? @"" : @"\n";
-
-        if (h > 0 && h < line.length && [line characterAtIndex:h] == ' ') {
-            static CGFloat sizes[] = {24, 20, 16, 14, 13, 12};
-            CGFloat sz = sizes[MIN(h - 1, 5)];
-            NSFont *headFont = [NSFont boldSystemFontOfSize:sz];
-            NSString *text = [[line substringFromIndex:h + 1]
-                stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-            paraAS = [[NSMutableAttributedString alloc]
-                initWithString:[text stringByAppendingString:sep]
-                    attributes:@{NSFontAttributeName: headFont}];
-        } else {
-            // List item
-            NSString *content = line;
-            if ([line hasPrefix:@"- "] || [line hasPrefix:@"* "] || [line hasPrefix:@"+ "])
-                content = [line substringFromIndex:2];
-            paraAS = [self parseMarkdownInline_unused:[content stringByAppendingString:sep]
-                                      baseFont:bodyFont];
-        }
-        [result appendAttributedString:paraAS];
-    }
-    return result;
-}
-
-- (NSMutableAttributedString *)parseMarkdownInline_unused:(NSString *)text baseFont:(NSFont *)base {
-    NSMutableAttributedString *result = [[NSMutableAttributedString alloc] init];
-    NSFontManager *fm = [NSFontManager sharedFontManager];
-    NSFont *boldFont   = [fm convertFont:base toHaveTrait:NSBoldFontMask];
-    NSFont *italicFont = [fm convertFont:base toHaveTrait:NSItalicFontMask];
-    NSFont *bItalic    = [fm convertFont:boldFont toHaveTrait:NSItalicFontMask];
-
-    NSUInteger pos = 0, len = text.length;
-
-    while (pos < len) {
-        unichar c = [text characterAtIndex:pos];
-        if (c == '*') {
-            NSUInteger stars = 0;
-            while (pos + stars < len && [text characterAtIndex:pos + stars] == '*') stars++;
-
-            if (stars >= 3) {
-                NSRange closeRange = [text rangeOfString:@"***" options:0
-                    range:NSMakeRange(pos + 3, len - pos - 3)];
-                if (closeRange.location != NSNotFound) {
-                    NSString *inner = [text substringWithRange:
-                        NSMakeRange(pos + 3, closeRange.location - pos - 3)];
-                    [result appendAttributedString:[self parseMarkdownInline_unused:inner baseFont:bItalic]];
-                    pos = closeRange.location + 3;
-                    continue;
-                }
-            } else if (stars == 2) {
-                NSRange closeRange = [text rangeOfString:@"**" options:0
-                    range:NSMakeRange(pos + 2, len - pos - 2)];
-                if (closeRange.location != NSNotFound) {
-                    NSString *inner = [text substringWithRange:
-                        NSMakeRange(pos + 2, closeRange.location - pos - 2)];
-                    [result appendAttributedString:[self parseMarkdownInline_unused:inner baseFont:boldFont]];
-                    pos = closeRange.location + 2;
-                    continue;
-                }
-            } else if (stars == 1) {
-                NSUInteger search = pos + 1;
-                NSRange closeRange = NSMakeRange(NSNotFound, 0);
-                while (search < len) {
-                    NSRange r = [text rangeOfString:@"*" options:0
-                        range:NSMakeRange(search, len - search)];
-                    if (r.location == NSNotFound) break;
-                    BOOL isDouble = (r.location + 1 < len && [text characterAtIndex:r.location + 1] == '*');
-                    if (!isDouble) { closeRange = r; break; }
-                    search = r.location + 1;
-                }
-                if (closeRange.location != NSNotFound) {
-                    NSString *inner = [text substringWithRange:
-                        NSMakeRange(pos + 1, closeRange.location - pos - 1)];
-                    [result appendAttributedString:[self parseMarkdownInline_unused:inner baseFont:italicFont]];
-                    pos = closeRange.location + 1;
-                    continue;
-                }
-            }
-        }
-        // Literal character
-        NSString *ch = [text substringWithRange:NSMakeRange(pos, 1)];
-        [result appendAttributedString:[[NSMutableAttributedString alloc]
-            initWithString:ch attributes:@{NSFontAttributeName: base}]];
-        pos++;
-    }
-    return result;
-}
-
 // ── Edit / Preview Toggle ─────────────────────────────────
 
 - (IBAction)toggleEditPreview:(id)sender {
@@ -1983,7 +1846,24 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     [s replaceOccurrencesOfString:@"&"  withString:@"&amp;"  options:0 range:NSMakeRange(0, s.length)];
     [s replaceOccurrencesOfString:@"<"  withString:@"&lt;"   options:0 range:NSMakeRange(0, s.length)];
     [s replaceOccurrencesOfString:@">"  withString:@"&gt;"   options:0 range:NSMakeRange(0, s.length)];
+    [s replaceOccurrencesOfString:@"\"" withString:@"&quot;" options:0 range:NSMakeRange(0, s.length)];
+    [s replaceOccurrencesOfString:@"'"  withString:@"&#39;"  options:0 range:NSMakeRange(0, s.length)];
     return [s copy];
+}
+
+// Reject URL schemes that could execute script in the preview WKWebView.
+// Input has already been HTML-escaped, so a bare scheme can't contain quotes.
+- (NSString *)sanitizeURL:(NSString *)url {
+    NSString *trimmed = [url stringByTrimmingCharactersInSet:
+                         [NSCharacterSet whitespaceCharacterSet]];
+    NSString *lower = trimmed.lowercaseString;
+    if ([lower hasPrefix:@"javascript:"] ||
+        [lower hasPrefix:@"vbscript:"]   ||
+        [lower hasPrefix:@"data:"]       ||
+        [lower hasPrefix:@"file:"]) {
+        return @"#";
+    }
+    return trimmed;
 }
 
 - (NSString *)applyInlineMarkdown:(NSString *)text {
@@ -1996,6 +1876,25 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
                                              options:0
                                                range:NSMakeRange(0, s.length)
                                         withTemplate:tpl] mutableCopy];
+    };
+
+    // Like `sub`, but the replacement for each match is produced by a block so
+    // we can sanitize captured URLs instead of trusting them verbatim.
+    NSMutableString *(^subBlock)(NSString *, NSString *(^)(NSTextCheckingResult *)) =
+    ^(NSString *pat, NSString *(^build)(NSTextCheckingResult *m)) {
+        NSRegularExpression *rx = [NSRegularExpression
+            regularExpressionWithPattern:pat options:0 error:nil];
+        NSMutableString *buf = [NSMutableString string];
+        __block NSUInteger last = 0;
+        [rx enumerateMatchesInString:s options:0 range:NSMakeRange(0, s.length)
+                          usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *stop){
+            (void)f; (void)stop;
+            [buf appendString:[s substringWithRange:NSMakeRange(last, m.range.location - last)]];
+            [buf appendString:build(m)];
+            last = NSMaxRange(m.range);
+        }];
+        [buf appendString:[s substringFromIndex:last]];
+        return buf;
     };
 
     NSMutableArray<NSString *> *slots = [NSMutableArray array];
@@ -2023,8 +1922,16 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     s = sub(@"(?<!\\*)\\*([^\\*\n]+)\\*(?!\\*)",       @"<em>$1</em>");
     s = sub(@"(?<!_)_([^_\n]+)_(?!_)",                 @"<em>$1</em>");
     s = sub(@"~~(.+?)~~",                              @"<del>$1</del>");
-    s = sub(@"!\\[([^\\]]*)\\]\\(([^\\)]+)\\)",        @"<img alt=\"$1\" src=\"$2\">");
-    s = sub(@"\\[([^\\]]+)\\]\\(([^\\)]+)\\)",         @"<a href=\"$2\">$1</a>");
+    s = subBlock(@"!\\[([^\\]]*)\\]\\(([^\\)]+)\\)", ^NSString *(NSTextCheckingResult *m){
+        NSString *alt = [s substringWithRange:[m rangeAtIndex:1]];
+        NSString *url = [self sanitizeURL:[s substringWithRange:[m rangeAtIndex:2]]];
+        return [NSString stringWithFormat:@"<img alt=\"%@\" src=\"%@\">", alt, url];
+    });
+    s = subBlock(@"\\[([^\\]]+)\\]\\(([^\\)]+)\\)", ^NSString *(NSTextCheckingResult *m){
+        NSString *label = [s substringWithRange:[m rangeAtIndex:1]];
+        NSString *url   = [self sanitizeURL:[s substringWithRange:[m rangeAtIndex:2]]];
+        return [NSString stringWithFormat:@"<a href=\"%@\">%@</a>", url, label];
+    });
 
     for (NSUInteger i = 0; i < slots.count; i++) {
         NSString *key = [NSString stringWithFormat:@"\x02%lu\x03", (unsigned long)i];
@@ -2709,19 +2616,24 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     return nil;
 }
 
-- (void)exportWithPandocFormat:(NSString *)pandocFormat
-                     extension:(NSString *)ext
-                   displayName:(NSString *)displayName
-                     extraArgs:(NSArray<NSString *> *)extraArgs {
+// Pandoc derives the output format from the destination extension, so the
+// caller only needs to supply that extension (plus any writer-specific args).
+- (void)exportWithExtension:(NSString *)ext
+                displayName:(NSString *)displayName
+                  extraArgs:(NSArray<NSString *> *)extraArgs {
     NSString *pandocPath = [self findPandoc];
     if (!pandocPath) {
         [self showError:@"Pandoc is not installed.\n\nInstall it with:\n\n    brew install pandoc"];
         return;
     }
 
+    // Export what's on screen: flush unsaved edits to disk first (or to a
+    // temp Markdown file for a never-saved document) so the output isn't stale.
     NSString *sourcePath = _currentFilePath;
     NSString *tempPath   = nil;
-    if (!sourcePath) {
+    if (sourcePath) {
+        if (_isDirty && ![self doSave]) return;
+    } else {
         tempPath   = [NSTemporaryDirectory() stringByAppendingPathComponent:
                       [NSString stringWithFormat:@"notepad_export_%@.md",
                        NSProcessInfo.processInfo.globallyUniqueString]];
@@ -2780,27 +2692,27 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
 }
 
 - (IBAction)exportAsHTML:(id)sender {
-    [self exportWithPandocFormat:@"html5" extension:@"html" displayName:@"HTML"
-                       extraArgs:@[@"--standalone"]];
+    [self exportWithExtension:@"html" displayName:@"HTML"
+                    extraArgs:@[@"--standalone"]];
 }
 - (IBAction)exportAsPDF:(id)sender {
-    [self exportWithPandocFormat:@"pdf" extension:@"pdf" displayName:@"PDF"
-                       extraArgs:@[]];
+    [self exportWithExtension:@"pdf" displayName:@"PDF"
+                    extraArgs:@[]];
 }
 - (IBAction)exportAsWord:(id)sender {
-    [self exportWithPandocFormat:@"docx" extension:@"docx" displayName:@"Word"
-                       extraArgs:@[]];
+    [self exportWithExtension:@"docx" displayName:@"Word"
+                    extraArgs:@[]];
 }
 - (IBAction)exportAsEPUB:(id)sender {
     NSString *title = _currentFilePath
         ? _currentFilePath.lastPathComponent.stringByDeletingPathExtension
         : @"Untitled";
-    [self exportWithPandocFormat:@"epub" extension:@"epub" displayName:@"ePub"
-                       extraArgs:@[@"--metadata", [NSString stringWithFormat:@"title:%@", title]]];
+    [self exportWithExtension:@"epub" displayName:@"ePub"
+                    extraArgs:@[@"--metadata", [NSString stringWithFormat:@"title:%@", title]]];
 }
 - (IBAction)exportAsLatex:(id)sender {
-    [self exportWithPandocFormat:@"latex" extension:@"tex" displayName:@"LaTeX"
-                       extraArgs:@[@"--standalone"]];
+    [self exportWithExtension:@"tex" displayName:@"LaTeX"
+                    extraArgs:@[@"--standalone"]];
 }
 
 - (void)showError:(NSString *)message {

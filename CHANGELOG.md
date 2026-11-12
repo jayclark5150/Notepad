@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.2] - 2026-11-11
+- **Fix (data loss)**: dragging a file onto the window now honors the unsaved-changes prompt instead of silently replacing your document
+- **Fix**: Pandoc export now reflects your current edits — unsaved changes are saved first rather than exporting the last-saved version on disk
+- **Security**: hardened the Markdown preview against HTML/script injection — quotes are now escaped and link/image URLs with `javascript:`, `vbscript:`, `data:`, or `file:` schemes are rejected
+- **Perf**: live Markdown formatting is debounced, so fast typing in large documents no longer reformats the whole document on every keystroke
+- **Encoding**: plain-text files now use automatic encoding detection (BOM/UTF-16) before falling back to UTF-8 and Latin-1
+- Internal cleanup: removed dead conversion code and an unused export parameter
+
 ## [2.2.1] - 2026-11-08
 - Fix code text in editor showing as gray — code content now uses body text color (pure black/white); monospace font distinguishes it from prose
 - Raise syntax marker color from `tertiaryLabelColor` to `secondaryLabelColor` for better visibility against pure white/black backgrounds
