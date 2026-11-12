@@ -90,3 +90,26 @@ spctl --assess --type execute --verbose Notepad.app   # after notarization
 2. Add a dated entry to `CHANGELOG.md`.
 3. `make dmg SIGN_ID="…"`, then notarize and staple (above).
 4. Commit, tag the release, and push.
+5. Publish a GitHub release whose tag is `v<version>` with `Notepad.dmg`
+   attached (the Homebrew cask downloads this exact asset name):
+
+   ```bash
+   gh release create "v<version>" Notepad.dmg --title "<version>" --notes "…"
+   ```
+
+6. **Update the Homebrew tap** so `brew install --cask jayclark5150/tap/notepad`
+   serves the new version. In the
+   [`jayclark5150/homebrew-tap`](https://github.com/jayclark5150/homebrew-tap)
+   repo, edit `Casks/notepad.rb`:
+   - set `version` to the new version;
+   - set `sha256` to the DMG hash: `shasum -a 256 Notepad.dmg`;
+   - keep the `url` pointing at `.../download/v#{version}/Notepad.dmg`;
+   - run `brew style Casks/notepad.rb` (should report no offenses), then
+     commit and push.
+
+   The cask `version`/`sha256` must match the uploaded DMG exactly, or the
+   install fails the checksum. Verify end to end with:
+
+   ```bash
+   brew update && brew upgrade --cask notepad   # or: brew install --cask jayclark5150/tap/notepad
+   ```
