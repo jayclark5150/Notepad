@@ -61,6 +61,7 @@ Spec: `docs/preview-features.md`.
 | P9 | A `- [ ]` line inside a fenced code block shows as code, not a checkbox | 2026-11-13 | Toggling text inside code |
 | P10 | Code-block copy icon copies the block and shows a checkmark | 2026-11-13 | Copy broken by icon change |
 | P11 | Light and dark mode: highlight, checkboxes and copy icon are readable | 2026-11-13 | Theme regressions |
+| P12 | A paragraph that is only `` `cmd` `` (one line, or several lines inside one pair of backticks) shows as a code block with the copy icon, and copying keeps the line breaks; `Run `make` now` stays inline | 2026-11-13 | Copy icon missing on standalone code; prose code turned into blocks |
 
 ## Findings log
 

@@ -19,7 +19,7 @@ A document editor for macOS. Open and edit plain text, Markdown, and Word docume
 - **Image paste** — paste a screenshot or image (Cmd+V) into a `.md` file; saved as `assets/image-YYYYMMDD-HHmmss.png` next to the document with a `![](assets/…)` reference inserted at the cursor; renders in preview
 - **Rendered preview** — full HTML preview via Cmd+\\ for a print-ready view
   - Click task-list boxes (`- [ ]` / `- [x]`) to tick them; the Markdown file is updated
-  - Code blocks have a copy icon (top right)
+  - Code blocks, and paragraphs that are only a `` `code` `` span, have a copy icon (top right)
   - Emoji shortcodes (`:joy:` → 😂, about 500 common GitHub names), `==highlight==`, subscript `H~2~O`, superscript `X^2^`
 - **Formatting toolbar** — Bold, Italic, Underline, Strikethrough, alignment buttons, and Heading Style popup (DOCX mode only)
 - **Typewriter mode** — cursor stays vertically centered as you type (View > Typewriter Mode or Cmd+Shift+T)

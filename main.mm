@@ -2215,11 +2215,43 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     __block BOOL inOL     = NO;
     __block NSUInteger olCounter = 0;
     __block NSMutableString *para = [NSMutableString string];
+    __block NSMutableString *paraRaw = [NSMutableString string];   // same lines, "\n"-joined
+
+    // Opening of a code block with its copy icon; close with "</pre></div>".
+    NSString *codeBlockOpen = [NSString stringWithFormat:
+        @"<div class='code-block'>"
+        "<button class='copy-btn' onclick='copyCode(this)' title='Copy' aria-label='Copy code'>"
+        "<svg class='ic-copy' viewBox='0 0 16 16' width='15' height='15' fill='none'"
+        " stroke='currentColor' stroke-width='1.4' stroke-linejoin='round'>"
+        "<rect x='5.5' y='5.5' width='8' height='8' rx='1.5'/>"
+        "<path d='M10.5 3.5v-.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h.5'/></svg>"
+        "<svg class='ic-check' viewBox='0 0 16 16' width='15' height='15' fill='none'"
+        " stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'>"
+        "<path d='M3.5 8.5l3 3 6-7'/></svg>"
+        "</button>"
+        "<pre class='code-pre' style='background:%@;'>",
+        codeBg];
 
     void (^flushPara)(void) = ^{
         if (!para.length) return;
+        // A paragraph that is one `code span` and nothing else is shown as a
+        // code block with a copy icon, keeping its line breaks for copying.
+        NSString *raw = [paraRaw stringByTrimmingCharactersInSet:
+                         [NSCharacterSet whitespaceCharacterSet]];
+        if (raw.length > 2 && [raw hasPrefix:@"`"] && [raw hasSuffix:@"`"]) {
+            NSString *inner = [raw substringWithRange:NSMakeRange(1, raw.length - 2)];
+            if ([inner rangeOfString:@"`"].location == NSNotFound &&
+                [inner stringByTrimmingCharactersInSet:
+                    [NSCharacterSet whitespaceAndNewlineCharacterSet]].length) {
+                [out appendFormat:@"%@%@</pre></div>\n", codeBlockOpen, [self htmlEscape:inner]];
+                [para setString:@""];
+                [paraRaw setString:@""];
+                return;
+            }
+        }
         [out appendFormat:@"<p>%@</p>\n", [self applyInlineMarkdown:[para copy]]];
         [para setString:@""];
+        [paraRaw setString:@""];
     };
     void (^closeLists)(void) = ^{
         if (inOL) { inOL = NO; olCounter = 0; }
@@ -2241,19 +2273,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
 
         if ([line hasPrefix:@"```"] || [line hasPrefix:@"~~~"]) {
             flushPara(); closeLists();
-            [out appendFormat:
-                @"<div class='code-block'>"
-                "<button class='copy-btn' onclick='copyCode(this)' title='Copy' aria-label='Copy code'>"
-                "<svg class='ic-copy' viewBox='0 0 16 16' width='15' height='15' fill='none'"
-                " stroke='currentColor' stroke-width='1.4' stroke-linejoin='round'>"
-                "<rect x='5.5' y='5.5' width='8' height='8' rx='1.5'/>"
-                "<path d='M10.5 3.5v-.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h.5'/></svg>"
-                "<svg class='ic-check' viewBox='0 0 16 16' width='15' height='15' fill='none'"
-                " stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'>"
-                "<path d='M3.5 8.5l3 3 6-7'/></svg>"
-                "</button>"
-                "<pre class='code-pre' style='background:%@;'>",
-                codeBg];
+            [out appendString:codeBlockOpen];
             inFence = YES;
             continue;
         }
@@ -2433,8 +2453,9 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
 
         // Paragraph
         closeLists();
-        if (para.length) [para appendString:@" "];
+        if (para.length) { [para appendString:@" "]; [paraRaw appendString:@"\n"]; }
         [para appendString:line];
+        [paraRaw appendString:line];
     }
 
     flushPara();

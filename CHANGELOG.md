@@ -3,6 +3,7 @@
 ## [2.3.0] - 2026-11-13
 - **Preview: clickable task lists**: tick or clear `- [ ]` / `- [x]` boxes in the preview; the Markdown is updated, the document is marked edited, and the change can be undone from the editor
 - **Preview: copy icon** on code blocks replaces the "Copy" text button and shows a checkmark when copied
+- **Preview: standalone code spans** (a paragraph that is only `` `code` ``, even across several lines) render as a code block with the copy icon, keeping line breaks
 - **Preview: extended Markdown**: emoji shortcodes (`:joy:`), `==highlight==`, subscript `H~2~O`, superscript `X^2^`
 - Task lists also accept `* [ ]` and `+ [ ]`
 - Preview keeps its scroll position when it re-renders
