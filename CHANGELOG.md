@@ -1,5 +1,8 @@
 # Changelog
 
+## [2.3.3] - 2026-11-13
+- **Fix**: hidden Markdown markers no longer leave gaps. `**`, `*`, `~~`, backticks, `## `, `> ` and a link's `[` `](url)` were painted invisible but kept their full width, so `**brown**` showed as "  brown  ". Hidden markers now take almost no space and reappear at full size when the cursor enters them
+
 ## [2.3.2] - 2026-11-13
 - **Fix (data loss)**: a Word document without its `.docx` extension opened as plain text full of zip bytes, and saving would have destroyed it. Notepad now checks a file's contents: Word files open as Word whatever their name, and other binary files (images, archives) are refused instead of being decoded as text
 - **Fix**: Bold, Italic, Underline and Strikethrough (toolbar buttons, Format menu, Cmd+B / Cmd+I / Cmd+U) did nothing and were always greyed out: their actions had no handler on macOS. In Word documents they now toggle real formatting on the selection (or for the next typed text), with undo; in Markdown files Bold, Italic and Strikethrough add or remove `**`, `*` and `~~` around the selection (Underline is unavailable, as Markdown has none)

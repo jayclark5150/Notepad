@@ -2695,6 +2695,9 @@ static BOOL NPRunHasMarker(NSUInteger run, NSString *marker) {
     NSColor *codeColor  = [self iaCodeColor];
     NSColor *dimColor   = [NSColor secondaryLabelColor];
     NSColor *quoteColor = [NSColor secondaryLabelColor];
+    // Hidden markers get a near-zero-width font as well as the background
+    // colour, so **bold** reads as "bold" without gaps where the ** were.
+    NSFont  *hiddenFont = [NSFont systemFontOfSize:0.1];
 
     NSFontManager *fm      = [NSFontManager sharedFontManager];
     NSFont *boldFont       = [fm convertFont:baseFont toHaveTrait:NSBoldFontMask];
@@ -2766,6 +2769,8 @@ static BOOL NPRunHasMarker(NSUInteger run, NSString *marker) {
                 [ts addAttribute:NSForegroundColorAttributeName
                            value:cursorOnLine ? dimColor : bgColor
                            range:markerRange];
+                if (!cursorOnLine)
+                    [ts addAttribute:NSFontAttributeName value:hiddenFont range:markerRange];
                 lineStart += lineLen + 1;
                 continue;
             }
@@ -2779,6 +2784,8 @@ static BOOL NPRunHasMarker(NSUInteger run, NSString *marker) {
             [ts addAttribute:NSForegroundColorAttributeName
                        value:cursorOnLine ? dimColor : bgColor
                        range:markerRange];
+            if (!cursorOnLine)
+                [ts addAttribute:NSFontAttributeName value:hiddenFont range:markerRange];
             lineStart += lineLen + 1;
             continue;
         }
@@ -2847,6 +2854,10 @@ static BOOL NPRunHasMarker(NSUInteger run, NSString *marker) {
         NSColor *mc = active ? dimColor : bgColor;
         [ts addAttribute:NSForegroundColorAttributeName value:mc range:openR];
         [ts addAttribute:NSForegroundColorAttributeName value:mc range:closeR];
+        if (!active) {
+            [ts addAttribute:NSFontAttributeName value:hiddenFont range:openR];
+            [ts addAttribute:NSFontAttributeName value:hiddenFont range:closeR];
+        }
     };
 
     // Inline code  `…`
@@ -2911,13 +2922,32 @@ static BOOL NPRunHasMarker(NSUInteger run, NSString *marker) {
             [ts addAttribute:NSForegroundColorAttributeName value:headColor range:full];
         } else {
             [ts addAttribute:NSForegroundColorAttributeName value:bgColor range:full];
-            if (textRange.location != NSNotFound && textRange.length > 0)
+            if (textRange.location != NSNotFound && textRange.length > 0) {
                 [ts addAttribute:NSForegroundColorAttributeName value:headColor range:textRange];
+                // Shrink only the syntax around the text: "[" / "![" and "](url)"
+                [ts addAttribute:NSFontAttributeName value:hiddenFont
+                           range:NSMakeRange(full.location, textRange.location - full.location)];
+                [ts addAttribute:NSFontAttributeName value:hiddenFont
+                           range:NSMakeRange(NSMaxRange(textRange), NSMaxRange(full) - NSMaxRange(textRange))];
+            } else {
+                [ts addAttribute:NSFontAttributeName value:hiddenFont range:full];
+            }
         }
     }];
 
     [ts endEditing];
     _isHighlighting = NO;
+
+    // Typing right after a hidden marker would otherwise inherit its tiny
+    // font and background colour until the next formatting pass.
+    NSFont *typingFont = _textView.typingAttributes[NSFontAttributeName];
+    if (typingFont && typingFont.pointSize < 1.0) {
+        NSMutableDictionary *typing = [_textView.typingAttributes mutableCopy];
+        typing[NSFontAttributeName]            = baseFont;
+        typing[NSForegroundColorAttributeName] = baseFg;
+        [typing removeObjectForKey:NSStrikethroughStyleAttributeName];
+        _textView.typingAttributes = typing;
+    }
 }
 
 // ── Font helpers ──────────────────────────────────────────
