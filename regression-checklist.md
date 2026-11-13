@@ -73,3 +73,4 @@ Spec: `docs/preview-features.md`.
 | F5 | 2026-11-13 | Audit: `GH_TOKEN` and `TAP_TOKEN` were set for the whole job, so the build step could read them. | Fixed: each token is set only on the steps that use it |
 | F6 | 2026-11-13 | Preview applied italic/bold rules inside link URLs, so `my_file_name.md` became `my<em>file</em>name.md` and broke the link. | Fixed in 2.3.0: URLs are parked before inline rules (P5) |
 | F7 | 2026-11-13 | Cmd+Z in the preview does not undo a task tick (the web view has focus). | Open: undo from the editor (P8) |
+| F8 | 2026-11-13 | `make` failed at codesign with "resource fork, Finder information, or similar detritus not allowed" when building in an iCloud-synced folder (~/Documents): sync re-adds Finder attributes after `xattr -cr`. | Fixed: the Makefile signs and verifies a copy in `$TMPDIR/notepad-build`; `dmg` and `install` copy from that clean signed copy |

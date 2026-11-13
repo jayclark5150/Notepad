@@ -20,6 +20,11 @@ ENTITLE  = Notepad.entitlements
 # only on the build machine; Gatekeeper blocks ad-hoc builds received through any
 # quarantine-triggering channel (download, AirDrop, email).
 SIGN_ID  = -
+# Signing happens in a temp folder: iCloud-synced folders (Desktop, Documents)
+# keep re-adding Finder attributes, which codesign rejects as "detritus".
+STAGE    = $(patsubst %/,%,$(or $(TMPDIR),/tmp))/notepad-build
+STAGED   = $(STAGE)/$(BUNDLE)
+COPY     = ditto --norsrc --noextattr --noqtn --noacl
 
 CXX      = clang++
 ARCH     = arm64
@@ -40,7 +45,7 @@ LDFLAGS  = -arch $(ARCH) \
            -framework WebKit \
            -framework UniformTypeIdentifiers
 
-.PHONY: all run clean
+.PHONY: all run install dmg clean
 
 all: $(BINARY) $(PLIST) $(ICNS_DST) codesign
 
@@ -62,24 +67,28 @@ $(PLIST): Info.plist | $(BUNDLE)/Contents/MacOS
 	xattr -c $@
 
 .PHONY: codesign
-codesign: $(BINARY) $(PLIST)
-	find $(BUNDLE) -name "._*" -delete
-	find $(BUNDLE) -name ".DS_Store" -delete
-	xattr -cr $(BUNDLE)
-	codesign --force --options runtime --entitlements $(ENTITLE) --sign $(SIGN_ID) $(BUNDLE)
+codesign: $(BINARY) $(PLIST) $(ICNS_DST)
+	rm -rf "$(STAGE)" && mkdir -p "$(STAGE)"
+	$(COPY) $(BUNDLE) "$(STAGED)"
+	find "$(STAGED)" \( -name "._*" -o -name ".DS_Store" \) -delete
+	xattr -cr "$(STAGED)"
+	codesign --force --options runtime --entitlements $(ENTITLE) --sign "$(SIGN_ID)" "$(STAGED)"
+	codesign --verify --deep --strict "$(STAGED)"
+	rm -rf $(BUNDLE)
+	$(COPY) "$(STAGED)" $(BUNDLE)
 
 
 run: all
 	open $(BUNDLE)
 
 install: all
-	cp -r $(BUNDLE) /Applications/$(BUNDLE)
-	xattr -cr /Applications/$(BUNDLE)
+	rm -rf /Applications/$(BUNDLE)
+	$(COPY) "$(STAGED)" /Applications/$(BUNDLE)
 	@echo "Installed to /Applications/$(BUNDLE)"
 
 dmg: all
 	$(eval DMG_DIR := $(shell mktemp -d))
-	cp -r $(BUNDLE) "$(DMG_DIR)/$(BUNDLE)"
+	$(COPY) "$(STAGED)" "$(DMG_DIR)/$(BUNDLE)"
 	ln -s /Applications "$(DMG_DIR)/Applications"
 	hdiutil create -volname "$(APP)" -srcfolder "$(DMG_DIR)" \
 	    -ov -format UDZO -o "$(APP).dmg"
@@ -87,4 +96,4 @@ dmg: all
 	@echo "Created $(APP).dmg"
 
 clean:
-	rm -rf $(BUNDLE)
+	rm -rf $(BUNDLE) "$(STAGE)"
