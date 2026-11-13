@@ -1,5 +1,8 @@
 # Changelog
 
+## [2.3.2] - 2026-11-13
+- **Build**: fix the two compiler warnings: the toolbar Heading Style popup now gets its 130 pt width from Auto Layout instead of the `NSToolbarItem` `minSize`/`maxSize` properties deprecated in macOS 12
+
 ## [2.3.1] - 2026-11-13
 - **Build**: each build embeds the SHA-256 of `main.mm`; `make` refuses to sign, and the release check refuses to publish, an app binary that was not compiled from the current source (a stale binary with a new `Info.plist` was uploaded as 2.3.0)
 - **Release check**: refuses to release unless the build folder is a clean git checkout at the release tag (catches an old `main.mm` restored by iCloud sync)

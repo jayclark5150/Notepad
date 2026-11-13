@@ -747,10 +747,12 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
         }
         _headingStylePopup.target = self;
         _headingStylePopup.action = @selector(headingPopupChanged:);
+        // Fixed width via Auto Layout; NSToolbarItem minSize/maxSize are
+        // deprecated since macOS 12. Height comes from the popup itself.
+        _headingStylePopup.translatesAutoresizingMaskIntoConstraints = NO;
+        [_headingStylePopup.widthAnchor constraintEqualToConstant:130].active = YES;
         item.view = _headingStylePopup;
         item.label = @"Style";
-        item.minSize = NSMakeSize(130, 24);
-        item.maxSize = NSMakeSize(130, 24);
     }
     return item;
 }
