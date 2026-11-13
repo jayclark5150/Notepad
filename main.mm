@@ -9,6 +9,15 @@
 #import <WebKit/WebKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
+// Build fingerprint: the Makefile passes the SHA-256 of this file, and the
+// build and release checks look for it in the binary to prove the app was
+// compiled from the current source (not a stale build with a new Info.plist).
+#ifndef NOTEPAD_SOURCE_SHA256
+#define NOTEPAD_SOURCE_SHA256 "unknown"
+#endif
+__attribute__((used)) static const char kSourceStamp[] =
+    "NOTEPAD-SOURCE-SHA256:" NOTEPAD_SOURCE_SHA256;
+
 // ============================================================
 // MARK: - NSUserDefaults Keys
 // ============================================================

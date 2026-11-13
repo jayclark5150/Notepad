@@ -25,6 +25,8 @@ SIGN_ID  = -
 STAGE    = $(patsubst %/,%,$(or $(TMPDIR),/tmp))/notepad-build
 STAGED   = $(STAGE)/$(BUNDLE)
 COPY     = ditto --norsrc --noextattr --noqtn --noacl
+# SHA-256 of the source, compiled into the binary and checked before signing.
+SRC_SHA  = $(shell shasum -a 256 $(SRC) | cut -d' ' -f1)
 
 CXX      = clang++
 ARCH     = arm64
@@ -36,7 +38,8 @@ CXXFLAGS = -arch $(ARCH) \
            -fobjc-arc \
            -isysroot $(SDK) \
            -mmacosx-version-min=$(MIN_VER) \
-           -Wall -Wextra -O2
+           -Wall -Wextra -O2 \
+           -DNOTEPAD_SOURCE_SHA256='"$(SRC_SHA)"'
 
 LDFLAGS  = -arch $(ARCH) \
            -isysroot $(SDK) \
@@ -68,6 +71,9 @@ $(PLIST): Info.plist | $(BUNDLE)/Contents/MacOS
 
 .PHONY: codesign
 codesign: $(BINARY) $(PLIST) $(ICNS_DST)
+	@LC_ALL=C grep -aq "NOTEPAD-SOURCE-SHA256:$(SRC_SHA)" $(BINARY) || \
+	    { echo "error: $(BINARY) was not built from the current $(SRC); run 'make clean' and rebuild"; exit 1; }
+	@echo "Source fingerprint OK: $(SRC_SHA)"
 	rm -rf "$(STAGE)" && mkdir -p "$(STAGE)"
 	$(COPY) $(BUNDLE) "$(STAGED)"
 	find "$(STAGED)" \( -name "._*" -o -name ".DS_Store" \) -delete

@@ -1,5 +1,8 @@
 # Changelog
 
+## [2.3.1] - 2026-11-13
+- **Build**: each build embeds the SHA-256 of `main.mm`; `make` refuses to sign, and the release check refuses to publish, an app binary that was not compiled from the current source (a stale binary with a new `Info.plist` was uploaded as 2.3.0)
+
 ## [2.3.0] - 2026-11-13
 - **Preview: clickable task lists**: tick or clear `- [ ]` / `- [x]` boxes in the preview; the Markdown is updated, the document is marked edited, and the change can be undone from the editor
 - **Preview: copy icon** on code blocks replaces the "Copy" text button and shows a checkmark when copied
