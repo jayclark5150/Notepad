@@ -2,7 +2,7 @@
 
 A document editor for macOS. Open and edit plain text, Markdown, and Word documents in a distraction-free, centered writing environment with seamless live Markdown rendering.
 
-![macOS](https://img.shields.io/badge/macOS-12.0%2B-blue) ![Architecture](https://img.shields.io/badge/arch-arm64-green) ![Version](https://img.shields.io/badge/version-2.2.2-orange)
+![macOS](https://img.shields.io/badge/macOS-12.0%2B-blue) ![Architecture](https://img.shields.io/badge/arch-arm64-green) ![Version](https://img.shields.io/badge/version-2.3.0-orange)
 
 ## Features
 
@@ -18,6 +18,9 @@ A document editor for macOS. Open and edit plain text, Markdown, and Word docume
 - **Seamless live Markdown rendering** — syntax markers hide as you write and reappear when the cursor returns; headings render at size, bold and italic apply in place, code spans use monospace — no mode switch needed
 - **Image paste** — paste a screenshot or image (Cmd+V) into a `.md` file; saved as `assets/image-YYYYMMDD-HHmmss.png` next to the document with a `![](assets/…)` reference inserted at the cursor; renders in preview
 - **Rendered preview** — full HTML preview via Cmd+\\ for a print-ready view
+  - Click task-list boxes (`- [ ]` / `- [x]`) to tick them; the Markdown file is updated
+  - Code blocks, and paragraphs that are only a `` `code` `` span, have a copy icon (top right)
+  - Emoji shortcodes (`:joy:` → 😂, about 500 common GitHub names), `==highlight==`, subscript `H~2~O`, superscript `X^2^`
 - **Formatting toolbar** — Bold, Italic, Underline, Strikethrough, alignment buttons, and Heading Style popup (DOCX mode only)
 - **Typewriter mode** — cursor stays vertically centered as you type (View > Typewriter Mode or Cmd+Shift+T)
 - **Full-screen support** — native macOS full-screen (green traffic-light button or View > Enter Full Screen)
@@ -86,6 +89,18 @@ A document editor for macOS. Open and edit plain text, Markdown, and Word docume
 | Preview bigger / smaller | Cmd+Option+= / Cmd+Option+- |
 | Preview actual size | Cmd+Option+0 |
 
+### Markdown in the preview
+
+| Write | Preview shows |
+|---|---|
+| `- [ ] task` / `- [x] done` | A checkbox you can click; the file is updated |
+| `:joy:`, `:+1:`, `:tada:` | 😂 👍 🎉 (about 500 common GitHub names) |
+| `==highlight==` | Highlighted text |
+| `H~2~O` | Subscript |
+| `X^2^` | Superscript |
+| `~~text~~` | Strikethrough |
+| A fenced code block, or a paragraph that is only `` `code` `` | Code block with a copy icon |
+
 ## How DOCX editing works
 
 When you open a `.docx` file the app loads it as native rich text using `NSAttributedString` with `NSOfficeOpenXMLTextDocumentType`. You can edit bold, italic, underline, strikethrough, text alignment, and heading font sizes directly. When you save, the rich text is written back to a valid `.docx` file with all formatting preserved.
@@ -126,6 +141,17 @@ make run      # Build and launch
 make install  # Build and copy to /Applications
 make dmg      # Build Notepad.dmg (drag-to-Applications installer)
 make clean    # Remove build artifacts
+```
+
+Building inside an iCloud-synced folder (Desktop or Documents) works: the
+Makefile signs a copy in a temporary folder, because iCloud keeps re-adding
+Finder attributes that `codesign` rejects.
+
+To switch from the Homebrew install to your own build:
+
+```bash
+brew uninstall --cask --force notepad
+make install
 ```
 
 By default the app is ad-hoc signed (runs only on the build machine). For a distributable build:

@@ -449,6 +449,7 @@ static const CGFloat kRulerWidth = 50.0;
 @property (nonatomic, strong) NSMenuItem            *previewMenuItem;
 @property (nonatomic, assign) BOOL                   editMode;          // YES=editor, NO=preview
 @property (nonatomic, assign) CGFloat                previewFontSize;
+@property (nonatomic, assign) BOOL                   previewResetScroll; // next preview load starts at top
 // Format
 @property (nonatomic, copy)   NSString              *fileFormat;        // txt, md, docx, doc
 // Custom text color (nil = use theme default)
@@ -638,6 +639,8 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     WKUserContentController *ucc = [[WKUserContentController alloc] init];
     [ucc addScriptMessageHandler:[[WeakScriptMessageHandler alloc] initWithDelegate:self]
                              name:@"copyCode"];
+    [ucc addScriptMessageHandler:[[WeakScriptMessageHandler alloc] initWithDelegate:self]
+                             name:@"toggleTask"];
     wkConfig.userContentController = ucc;
     _previewWebView = [[WKWebView alloc] initWithFrame:editFrame configuration:wkConfig];
     _previewWebView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
@@ -1301,6 +1304,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     [_textView.textStorage replaceCharactersInRange:NSMakeRange(0, _textView.string.length)
                                          withString:@""];
     [_textView.undoManager removeAllActions];
+    _previewResetScroll = YES;
     [self applyTheme];
     [self updateTitle];
     [self updateStatusBar];
@@ -1390,6 +1394,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     _currentFilePath = path;
     _isDirty = NO;
     [self applyFont];
+    _previewResetScroll = YES;
     [self schedulePreviewUpdate];
     [self updateTitle];
     [self updateStatusBar];
@@ -1749,6 +1754,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     _scrollView.hidden     = !_editMode;
     _previewWebView.hidden =  _editMode;
     _previewMenuItem.title = _editMode ? @"Show Preview" : @"Show Editor";
+    _previewResetScroll = YES;
     if (!_editMode) [self updatePreview];
 }
 
@@ -1763,13 +1769,31 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
 
 - (void)updatePreview {
     if (_editMode || [self isRichTextMode]) return;
+    if (_previewResetScroll) {
+        _previewResetScroll = NO;
+        [self loadPreviewScrolledTo:0];
+        return;
+    }
+    // Re-rendering (e.g. after a task box is clicked) keeps the reader's place.
+    __weak AppDelegate *weakSelf = self;
+    [_previewWebView evaluateJavaScript:@"window.scrollY"
+                      completionHandler:^(id result, NSError *error) {
+        (void)error;
+        AppDelegate *s = weakSelf;
+        if (!s || s->_editMode) return;
+        double y = [result isKindOfClass:[NSNumber class]] ? [result doubleValue] : 0;
+        [s loadPreviewScrolledTo:y];
+    }];
+}
 
+- (void)loadPreviewScrolledTo:(double)scrollY {
     BOOL dark = [self isDarkMode];
     NSString *fg           = dark ? @"#FFFFFF" : @"#000000";
     NSString *bg           = dark ? @"#000000" : @"#FFFFFF";
     NSString *headingColor = dark ? @"#7FBBE0" : @"#2458A5";
     NSString *codeBg       = dark ? @"#242424" : @"#E8E6E3";
     NSString *borderColor  = dark ? @"#333333" : @"#C8C6C3";
+    NSString *markBg       = dark ? @"#665200" : @"#FFE680";
 
     NSString *body = [self markdownToHTML:_textView.string];
 
@@ -1783,28 +1807,43 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
         "code{font-family:Menlo,Monaco,monospace;background:%@;color:inherit;padding:1px 5px;font-size:.88em;border-radius:4px;}"
         "hr{border:none;border-top:1px solid %@;margin:1.2em 0;}"
         "del{opacity:.55;}"
+        "mark{background:%@;color:inherit;padding:0 2px;border-radius:3px;}"
+        "sub,sup{line-height:0;}"
+        ".task{display:flex;align-items:baseline;gap:8px;margin:0 0 .3em 4px;}"
+        ".task input{accent-color:%@;width:15px;height:15px;margin:0;"
+        "transform:translateY(2px);cursor:pointer;flex:none;}"
         ".code-block{position:relative;border-radius:8px;margin:1em 0;overflow:hidden;}"
-        ".code-pre{margin:0;padding:14px 16px;font-family:Menlo,Monaco,monospace;font-size:.88em;overflow-x:auto;white-space:pre-wrap;overflow-wrap:break-word;background:%@;color:inherit;}"
-        ".copy-btn{position:absolute;top:8px;right:8px;border:none;border-radius:6px;"
-        "padding:3px 10px;font-size:11px;cursor:pointer;background:rgba(128,128,128,0.25);"
-        "color:inherit;font-family:-apple-system,sans-serif;opacity:0;transition:opacity 0.15s;}"
+        ".code-pre{margin:0;padding:14px 44px 14px 16px;font-family:Menlo,Monaco,monospace;font-size:.88em;overflow-x:auto;white-space:pre-wrap;overflow-wrap:break-word;background:%@;color:inherit;}"
+        ".copy-btn{position:absolute;top:6px;right:6px;border:none;border-radius:6px;"
+        "width:28px;height:26px;padding:0;display:flex;align-items:center;justify-content:center;"
+        "cursor:pointer;background:transparent;color:inherit;opacity:.45;transition:opacity .15s,background .15s;}"
         ".code-block:hover .copy-btn{opacity:1;}"
-        ".copy-btn.copied{background:rgba(52,199,89,0.35);}"
+        ".copy-btn:hover{background:rgba(128,128,128,0.22);}"
+        ".copy-btn .ic-check{display:none;}"
+        ".copy-btn.copied{opacity:1;color:#34C759;}"
+        ".copy-btn.copied .ic-copy{display:none;}"
+        ".copy-btn.copied .ic-check{display:block;}"
         "</style></head><body>%@"
         "<script>"
         "function copyCode(btn){"
         "var pre=btn.parentElement.querySelector('pre');"
         "window.webkit.messageHandlers.copyCode.postMessage(pre.textContent);"
-        "btn.textContent='Copied!';"
-        "btn.classList.add('copied');"
-        "setTimeout(function(){btn.textContent='Copy';btn.classList.remove('copied');},2000);}"
+        "btn.classList.add('copied');btn.title='Copied';"
+        "setTimeout(function(){btn.classList.remove('copied');btn.title='Copy';},1500);}"
+        "function toggleTask(cb){"
+        "window.webkit.messageHandlers.toggleTask.postMessage("
+        "{line:parseInt(cb.getAttribute('data-line'),10),checked:cb.checked});}"
+        "window.addEventListener('load',function(){window.scrollTo(0,%g);});"
         "</script>"
         "</body></html>",
         (double)_previewFontSize, fg, bg, headingColor,
         codeBg,
         borderColor,
+        markBg,
+        headingColor,
         codeBg,
-        body];
+        body,
+        scrollY];
 
     NSURL *baseURL = _currentFilePath
         ? [NSURL fileURLWithPath:[_currentFilePath stringByDeletingLastPathComponent]
@@ -1836,7 +1875,51 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
         NSPasteboard *pb = [NSPasteboard generalPasteboard];
         [pb clearContents];
         [pb setString:(NSString *)message.body forType:NSPasteboardTypeString];
+    } else if ([message.name isEqualToString:@"toggleTask"] &&
+               [message.body isKindOfClass:[NSDictionary class]]) {
+        id line    = ((NSDictionary *)message.body)[@"line"];
+        id checked = ((NSDictionary *)message.body)[@"checked"];
+        if ([line isKindOfClass:[NSNumber class]] && [checked isKindOfClass:[NSNumber class]])
+            [self setTaskAtLine:[line integerValue] checked:[checked boolValue]];
     }
+}
+
+// "- [ ] ", "* [x] ", "+ [X] " at the start of a line.
+- (BOOL)isTaskLine:(NSString *)line {
+    if (line.length < 6) return NO;
+    unichar b = [line characterAtIndex:0], box = [line characterAtIndex:3];
+    return (b == '-' || b == '*' || b == '+') &&
+           [line characterAtIndex:1] == ' ' && [line characterAtIndex:2] == '[' &&
+           (box == ' ' || box == 'x' || box == 'X') &&
+           [line characterAtIndex:4] == ']' && [line characterAtIndex:5] == ' ';
+}
+
+// Ticks or clears a task box clicked in the preview. The line index comes from
+// the page, so it is re-checked against the current text before anything is
+// changed; on a mismatch the preview is re-rendered instead.
+- (void)setTaskAtLine:(NSInteger)lineIndex checked:(BOOL)checked {
+    if (_editMode || [self isRichTextMode] || lineIndex < 0) return;
+    NSString *str = _textView.string;
+    NSUInteger start = 0;
+    for (NSInteger i = 0; i < lineIndex; i++) {
+        NSRange nl = [str rangeOfString:@"\n" options:NSLiteralSearch
+                                  range:NSMakeRange(start, str.length - start)];
+        if (nl.location == NSNotFound) { [self updatePreview]; return; }
+        start = NSMaxRange(nl);
+    }
+    NSRange nl = [str rangeOfString:@"\n" options:NSLiteralSearch
+                              range:NSMakeRange(start, str.length - start)];
+    NSUInteger end = (nl.location == NSNotFound) ? str.length : nl.location;
+    NSString *line = [str substringWithRange:NSMakeRange(start, end - start)];
+    if (![self isTaskLine:line]) { [self updatePreview]; return; }
+
+    unichar cur = [line characterAtIndex:3];
+    if ((cur == 'x' || cur == 'X') == checked) return;
+    NSRange box = NSMakeRange(start + 3, 1);
+    NSString *mark = checked ? @"x" : @" ";
+    if (![_textView shouldChangeTextInRange:box replacementString:mark]) return;
+    [_textView.textStorage replaceCharactersInRange:box withString:mark];
+    [_textView didChangeText];   // marks the document edited, registers undo, re-renders
 }
 
 // ── Markdown → HTML ───────────────────────────────────────
@@ -1864,6 +1947,151 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
         return @"#";
     }
     return trimmed;
+}
+
+// ── Emoji shortcodes ──────────────────────────────────────
+
+// GitHub-style names (":joy:") for the common emoji. Unknown names return nil
+// and are left as typed in the preview.
+- (NSString *)emojiForShortcode:(NSString *)name {
+    static NSDictionary<NSString *, NSString *> *table;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        table = @{
+            @"+1":@"👍", @"-1":@"👎", @"100":@"💯", @"1st_place_medal":@"🥇",
+            @"2nd_place_medal":@"🥈", @"3rd_place_medal":@"🥉", @"airplane":@"✈️", @"alarm_clock":@"⏰",
+            @"alien":@"👽", @"anchor":@"⚓", @"angel":@"👼", @"angry":@"😠",
+            @"apple":@"🍎", @"arrow_down":@"⬇️", @"arrow_left":@"⬅️", @"arrow_right":@"➡️",
+            @"arrow_right_hook":@"↪️", @"arrow_up":@"⬆️", @"arrows_counterclockwise":@"🔄", @"art":@"🎨",
+            @"artist":@"🧑‍🎨", @"astonished":@"😲", @"astronaut":@"🧑‍🚀", @"au":@"🇦🇺",
+            @"avocado":@"🥑", @"baby":@"👶", @"bacon":@"🥓", @"balloon":@"🎈",
+            @"ballot_box_with_check":@"☑️", @"banana":@"🍌", @"bangbang":@"‼️", @"bar_chart":@"📊",
+            @"baseball":@"⚾", @"basketball":@"🏀", @"battery":@"🔋", @"beach_umbrella":@"🏖️",
+            @"bear":@"🐻", @"bee":@"🐝", @"beer":@"🍺", @"beers":@"🍻",
+            @"bell":@"🔔", @"bicyclist":@"🚴", @"bike":@"🚲", @"bird":@"🐦",
+            @"birthday":@"🎂", @"black_circle":@"⚫", @"black_heart":@"🖤", @"black_nib":@"✒️",
+            @"blue_circle":@"🔵", @"blue_heart":@"💙", @"blush":@"😊", @"boat":@"⛵",
+            @"book":@"📖", @"bookmark":@"🔖", @"books":@"📚", @"boom":@"💥",
+            @"bouquet":@"💐", @"bow":@"🙇", @"bowling":@"🎳", @"boy":@"👦",
+            @"br":@"🇧🇷", @"brain":@"🧠", @"bread":@"🍞", @"briefcase":@"💼",
+            @"broken_heart":@"💔", @"bug":@"🐛", @"bulb":@"💡", @"burrito":@"🌯",
+            @"bus":@"🚌", @"bust_in_silhouette":@"👤", @"busts_in_silhouette":@"👥", @"butterfly":@"🦋",
+            @"ca":@"🇨🇦", @"cactus":@"🌵", @"cake":@"🍰", @"calendar":@"📆",
+            @"call_me_hand":@"🤙", @"camera":@"📷", @"camera_flash":@"📸", @"candle":@"🕯️",
+            @"candy":@"🍬", @"car":@"🚗", @"card_index_dividers":@"🗂️", @"carrot":@"🥕",
+            @"cat":@"🐱", @"cd":@"💿", @"ch":@"🇨🇭", @"champagne":@"🍾",
+            @"chart_with_downwards_trend":@"📉", @"chart_with_upwards_trend":@"📈", @"checkered_flag":@"🏁", @"cheese":@"🧀",
+            @"cherries":@"🍒", @"cherry_blossom":@"🌸", @"chess_pawn":@"♟️", @"chicken":@"🐔",
+            @"chocolate_bar":@"🍫", @"christmas_tree":@"🎄", @"clap":@"👏", @"clapper":@"🎬",
+            @"clinking_glasses":@"🥂", @"clipboard":@"📋", @"cloud":@"☁️", @"clown_face":@"🤡",
+            @"cn":@"🇨🇳", @"cocktail":@"🍸", @"coffee":@"☕", @"cold_sweat":@"😰",
+            @"collision":@"💥", @"computer":@"💻", @"computer_mouse":@"🖱️", @"confetti_ball":@"🎊",
+            @"confounded":@"😖", @"confused":@"😕", @"construction":@"🚧", @"construction_worker":@"👷",
+            @"cook":@"🧑‍🍳", @"cookie":@"🍪", @"cool":@"🆒", @"cop":@"👮",
+            @"copyright":@"©️", @"corn":@"🌽", @"cow":@"🐮", @"crab":@"🦀",
+            @"credit_card":@"💳", @"crescent_moon":@"🌙", @"crossed_fingers":@"🤞", @"crown":@"👑",
+            @"cry":@"😢", @"cupcake":@"🧁", @"dancer":@"💃", @"dark_sunglasses":@"🕶️",
+            @"dart":@"🎯", @"date":@"📅", @"de":@"🇩🇪", @"deciduous_tree":@"🌳",
+            @"desktop_computer":@"🖥️", @"detective":@"🕵️", @"disappointed":@"😞", @"dizzy":@"💫",
+            @"dog":@"🐶", @"dollar":@"💵", @"dolphin":@"🐬", @"doughnut":@"🍩",
+            @"dress":@"👗", @"droplet":@"💧", @"drum":@"🥁", @"dvd":@"📀",
+            @"earth_africa":@"🌍", @"earth_americas":@"🌎", @"earth_asia":@"🌏", @"egg":@"🥚",
+            @"eggplant":@"🍆", @"electric_plug":@"🔌", @"email":@"📧", @"envelope":@"✉️",
+            @"es":@"🇪🇸", @"evergreen_tree":@"🌲", @"exclamation":@"❗", @"expressionless":@"😑",
+            @"eye":@"👁️", @"eyeglasses":@"👓", @"eyes":@"👀", @"facepalm":@"🤦",
+            @"facepunch":@"👊", @"fallen_leaf":@"🍂", @"family":@"👪", @"farmer":@"🧑‍🌾",
+            @"fearful":@"😨", @"file_folder":@"📁", @"fire":@"🔥", @"firefighter":@"🧑‍🚒",
+            @"fish":@"🐟", @"fist":@"✊", @"flashlight":@"🔦", @"floppy_disk":@"💾",
+            @"flushed":@"😳", @"football":@"🏈", @"footprints":@"👣", @"four_leaf_clover":@"🍀",
+            @"fox_face":@"🦊", @"fr":@"🇫🇷", @"free":@"🆓", @"fries":@"🍟",
+            @"frog":@"🐸", @"fuelpump":@"⛽", @"game_die":@"🎲", @"gb":@"🇬🇧",
+            @"gear":@"⚙️", @"gem":@"💎", @"ghost":@"👻", @"gift":@"🎁",
+            @"girl":@"👧", @"globe_with_meridians":@"🌐", @"golf":@"⛳", @"grapes":@"🍇",
+            @"green_apple":@"🍏", @"green_circle":@"🟢", @"green_heart":@"💚", @"grey_exclamation":@"❕",
+            @"grey_question":@"❔", @"grimacing":@"😬", @"grin":@"😁", @"grinning":@"😀",
+            @"guitar":@"🎸", @"hamburger":@"🍔", @"hammer":@"🔨", @"hammer_and_wrench":@"🛠️",
+            @"hand":@"✋", @"handbag":@"👜", @"handshake":@"🤝", @"hankey":@"💩",
+            @"headphones":@"🎧", @"hear_no_evil":@"🙉", @"heart":@"❤️", @"heart_eyes":@"😍",
+            @"heavy_check_mark":@"✔️", @"heavy_exclamation_mark":@"❗", @"heavy_minus_sign":@"➖", @"heavy_multiplication_x":@"✖️",
+            @"heavy_plus_sign":@"➕", @"helicopter":@"🚁", @"herb":@"🌿", @"hibiscus":@"🌺",
+            @"high_heel":@"👠", @"honeybee":@"🐝", @"hospital":@"🏥", @"hot_pepper":@"🌶️",
+            @"hotdog":@"🌭", @"hourglass":@"⌛", @"hourglass_flowing_sand":@"⏳", @"house":@"🏠",
+            @"house_with_garden":@"🏡", @"hugs":@"🤗", @"ice_cream":@"🍨", @"icecream":@"🍦",
+            @"ie":@"🇮🇪", @"in":@"🇮🇳", @"inbox_tray":@"📥", @"incoming_envelope":@"📨",
+            @"infinity":@"♾️", @"information_desk_person":@"💁", @"information_source":@"ℹ️", @"innocent":@"😇",
+            @"interrobang":@"⁉️", @"iphone":@"📱", @"it":@"🇮🇹", @"jeans":@"👖",
+            @"jigsaw":@"🧩", @"joy":@"😂", @"jp":@"🇯🇵", @"judge":@"🧑‍⚖️",
+            @"key":@"🔑", @"keyboard":@"⌨️", @"kiss":@"💋", @"kissing_heart":@"😘",
+            @"kr":@"🇰🇷", @"label":@"🏷️", @"large_blue_diamond":@"🔷", @"large_orange_diamond":@"🔶",
+            @"laughing":@"😆", @"ledger":@"📒", @"leftwards_arrow_with_hook":@"↩️", @"lemon":@"🍋",
+            @"link":@"🔗", @"lion":@"🦁", @"lipstick":@"💄", @"lock":@"🔒",
+            @"loudspeaker":@"📢", @"mag":@"🔍", @"mag_right":@"🔎", @"magnet":@"🧲",
+            @"mailbox":@"📫", @"man":@"👨", @"man_shrugging":@"🤷‍♂️", @"maple_leaf":@"🍁",
+            @"mask":@"😷", @"medal_sports":@"🏅", @"mega":@"📣", @"memo":@"📝",
+            @"metal":@"🤘", @"microphone":@"🎤", @"microscope":@"🔬", @"middle_finger":@"🖕",
+            @"milk_glass":@"🥛", @"money_mouth_face":@"🤑", @"moneybag":@"💰", @"monkey_face":@"🐵",
+            @"mortar_board":@"🎓", @"motorcycle":@"🏍️", @"mountain":@"⛰️", @"mouse":@"🐭",
+            @"movie_camera":@"🎥", @"muscle":@"💪", @"mushroom":@"🍄", @"musical_note":@"🎵",
+            @"mx":@"🇲🇽", @"negative_squared_cross_mark":@"❎", @"nerd_face":@"🤓", @"neutral_face":@"😐",
+            @"new":@"🆕", @"newspaper":@"📰", @"ninja":@"🥷", @"nl":@"🇳🇱",
+            @"no_bell":@"🔕", @"no_entry":@"⛔", @"no_entry_sign":@"🚫", @"no_good":@"🙅",
+            @"no_mouth":@"😶", @"notebook":@"📓", @"notes":@"🎶", @"nut_and_bolt":@"🔩",
+            @"ocean":@"🌊", @"octopus":@"🐙", @"office":@"🏢", @"ok":@"🆗",
+            @"ok_hand":@"👌", @"ok_woman":@"🙆", @"old_key":@"🗝️", @"older_man":@"👴",
+            @"older_woman":@"👵", @"open_book":@"📖", @"open_file_folder":@"📂", @"open_hands":@"👐",
+            @"open_mouth":@"😮", @"orange_circle":@"🟠", @"orange_heart":@"🧡", @"outbox_tray":@"📤",
+            @"package":@"📦", @"page_facing_up":@"📄", @"palm_tree":@"🌴", @"panda_face":@"🐼",
+            @"paperclip":@"📎", @"partly_sunny":@"⛅", @"partying_face":@"🥳", @"peach":@"🍑",
+            @"pen":@"🖊️", @"pencil":@"📝", @"pencil2":@"✏️", @"penguin":@"🐧",
+            @"pensive":@"😔", @"persevere":@"😣", @"person_facepalming":@"🤦", @"person_shrugging":@"🤷",
+            @"phone":@"☎️", @"piano":@"🎹", @"pig":@"🐷", @"pill":@"💊",
+            @"pilot":@"🧑‍✈️", @"pinched_fingers":@"🤌", @"pineapple":@"🍍", @"pirate_flag":@"🏴‍☠️",
+            @"pizza":@"🍕", @"pleading_face":@"🥺", @"point_down":@"👇", @"point_left":@"👈",
+            @"point_right":@"👉", @"point_up":@"☝️", @"point_up_2":@"👆", @"poop":@"💩",
+            @"popcorn":@"🍿", @"pray":@"🙏", @"printer":@"🖨️", @"punch":@"👊",
+            @"purple_circle":@"🟣", @"purple_heart":@"💜", @"pushpin":@"📌", @"question":@"❓",
+            @"rabbit":@"🐰", @"radio":@"📻", @"rage":@"😡", @"rainbow":@"🌈",
+            @"rainbow_flag":@"🏳️‍🌈", @"raised_eyebrow":@"🤨", @"raised_hand":@"✋", @"raised_hands":@"🙌",
+            @"raising_hand":@"🙋", @"ramen":@"🍜", @"recycle":@"♻️", @"red_car":@"🚗",
+            @"red_circle":@"🔴", @"registered":@"®️", @"relieved":@"😌", @"ribbon":@"🎀",
+            @"ring":@"💍", @"robot":@"🤖", @"rocket":@"🚀", @"rofl":@"🤣",
+            @"roll_eyes":@"🙄", @"rose":@"🌹", @"round_pushpin":@"📍", @"runner":@"🏃",
+            @"running":@"🏃", @"running_shoe":@"👟", @"sailboat":@"⛵", @"santa":@"🎅",
+            @"satisfied":@"😆", @"school":@"🏫", @"school_satchel":@"🎒", @"scientist":@"🧑‍🔬",
+            @"scissors":@"✂️", @"scream":@"😱", @"se":@"🇸🇪", @"see_no_evil":@"🙈",
+            @"seedling":@"🌱", @"shark":@"🦈", @"shield":@"🛡️", @"ship":@"🚢",
+            @"shrug":@"🤷", @"shushing_face":@"🤫", @"skull":@"💀", @"sleeping":@"😴",
+            @"sleepy":@"😪", @"slightly_frowning_face":@"🙁", @"slightly_smiling_face":@"🙂", @"small_red_triangle":@"🔺",
+            @"smile":@"😄", @"smiley":@"😃", @"smirk":@"😏", @"snail":@"🐌",
+            @"snake":@"🐍", @"snowflake":@"❄️", @"snowman":@"⛄", @"sob":@"😭",
+            @"soccer":@"⚽", @"sos":@"🆘", @"spaghetti":@"🍝", @"sparkles":@"✨",
+            @"sparkling_heart":@"💖", @"speak_no_evil":@"🙊", @"speech_balloon":@"💬", @"spiral_calendar":@"🗓️",
+            @"star":@"⭐", @"star2":@"🌟", @"star_struck":@"🤩", @"statue_of_liberty":@"🗽",
+            @"stop_sign":@"🛑", @"stopwatch":@"⏱️", @"strawberry":@"🍓", @"stuck_out_tongue":@"😛",
+            @"stuck_out_tongue_winking_eye":@"😜", @"sun_with_face":@"🌞", @"sunflower":@"🌻", @"sunglasses":@"😎",
+            @"sunny":@"☀️", @"surfer":@"🏄", @"sushi":@"🍣", @"sweat":@"😓",
+            @"sweat_drops":@"💦", @"sweat_smile":@"😅", @"swimmer":@"🏊", @"syringe":@"💉",
+            @"taco":@"🌮", @"tada":@"🎉", @"taxi":@"🚕", @"tea":@"🍵",
+            @"teacher":@"🧑‍🏫", @"technologist":@"🧑‍💻", @"telephone":@"☎️", @"telescope":@"🔭",
+            @"tennis":@"🎾", @"tent":@"⛺", @"test_tube":@"🧪", @"thinking":@"🤔",
+            @"thought_balloon":@"💭", @"thumbsdown":@"👎", @"thumbsup":@"👍", @"tiger":@"🐯",
+            @"tired_face":@"😫", @"tm":@"™️", @"tomato":@"🍅", @"tophat":@"🎩",
+            @"train":@"🚆", @"triangular_flag_on_post":@"🚩", @"triumph":@"😤", @"trophy":@"🏆",
+            @"tropical_drink":@"🍹", @"truck":@"🚚", @"tshirt":@"👕", @"tulip":@"🌷",
+            @"turtle":@"🐢", @"tv":@"📺", @"two_hearts":@"💕", @"uk":@"🇬🇧",
+            @"umbrella":@"☔", @"umbrella_closed":@"🌂", @"unamused":@"😒", @"unicorn":@"🦄",
+            @"unlock":@"🔓", @"up":@"🆙", @"upside_down_face":@"🙃", @"us":@"🇺🇸",
+            @"v":@"✌️", @"video_game":@"🎮", @"volleyball":@"🏐", @"walking":@"🚶",
+            @"warning":@"⚠️", @"wastebasket":@"🗑️", @"watch":@"⌚", @"watermelon":@"🍉",
+            @"wave":@"👋", @"weary":@"😩", @"weight_lifting":@"🏋️", @"whale":@"🐳",
+            @"white_check_mark":@"✅", @"white_circle":@"⚪", @"white_flag":@"🏳️", @"white_heart":@"🤍",
+            @"wine_glass":@"🍷", @"wink":@"😉", @"woman":@"👩", @"woman_shrugging":@"🤷‍♀️",
+            @"worried":@"😟", @"wrench":@"🔧", @"writing_hand":@"✍️", @"x":@"❌",
+            @"yawning_face":@"🥱", @"yellow_circle":@"🟡", @"yellow_heart":@"💛", @"yum":@"😋",
+            @"zany_face":@"🤪", @"zap":@"⚡", @"zipper_mouth_face":@"🤐", @"zzz":@"💤",
+        };
+    });
+    return table[name];
 }
 
 - (NSString *)applyInlineMarkdown:(NSString *)text {
@@ -1916,21 +2144,52 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
         [s setString:buf];
     }
 
+    // Park link and image targets so the inline rules below can't rewrite
+    // characters inside URLs (e.g. "_" or "~").
+    NSMutableArray<NSString *> *urls = [NSMutableArray array];
+    s = subBlock(@"\\]\\(([^\\)]+)\\)", ^NSString *(NSTextCheckingResult *m){
+        [urls addObject:[s substringWithRange:[m rangeAtIndex:1]]];
+        return [NSString stringWithFormat:@"](\x04%lu\x05)", (unsigned long)(urls.count - 1)];
+    });
+    NSString *(^urlFor)(NSString *) = ^NSString *(NSString *token) {
+        if (token.length > 2 && [token characterAtIndex:0] == 0x04) {
+            NSUInteger idx = (NSUInteger)[[token substringWithRange:
+                                           NSMakeRange(1, token.length - 2)] integerValue];
+            if (idx < urls.count) return urls[idx];
+        }
+        return token;
+    };
+
+    // Emoji shortcodes such as :joy: (unknown names are left as typed).
+    // Runs before the "_" italic rule so :white_check_mark: stays intact.
+    s = subBlock(@":([a-z0-9_+\\-]+):", ^NSString *(NSTextCheckingResult *m){
+        NSString *emoji = [self emojiForShortcode:[s substringWithRange:[m rangeAtIndex:1]]];
+        return emoji ?: [s substringWithRange:m.range];
+    });
+
     s = sub(@"\\*{3}(.+?)\\*{3}",                     @"<strong><em>$1</em></strong>");
     s = sub(@"\\*{2}(.+?)\\*{2}",                     @"<strong>$1</strong>");
     s = sub(@"__(.+?)__",                              @"<strong>$1</strong>");
     s = sub(@"(?<!\\*)\\*([^\\*\n]+)\\*(?!\\*)",       @"<em>$1</em>");
     s = sub(@"(?<!_)_([^_\n]+)_(?!_)",                 @"<em>$1</em>");
     s = sub(@"~~(.+?)~~",                              @"<del>$1</del>");
+    // Extended syntax: ==highlight==, H~2~O, X^2^ (no spaces inside sub/sup)
+    s = sub(@"==(?=\\S)(.+?)(?<=\\S)==",            @"<mark>$1</mark>");
+    s = sub(@"(?<!~)~([^~\\s]+)~(?!~)",               @"<sub>$1</sub>");
+    s = sub(@"\\^([^\\^\\s]+)\\^",                  @"<sup>$1</sup>");
     s = subBlock(@"!\\[([^\\]]*)\\]\\(([^\\)]+)\\)", ^NSString *(NSTextCheckingResult *m){
         NSString *alt = [s substringWithRange:[m rangeAtIndex:1]];
-        NSString *url = [self sanitizeURL:[s substringWithRange:[m rangeAtIndex:2]]];
+        NSString *url = [self sanitizeURL:urlFor([s substringWithRange:[m rangeAtIndex:2]])];
         return [NSString stringWithFormat:@"<img alt=\"%@\" src=\"%@\">", alt, url];
     });
     s = subBlock(@"\\[([^\\]]+)\\]\\(([^\\)]+)\\)", ^NSString *(NSTextCheckingResult *m){
         NSString *label = [s substringWithRange:[m rangeAtIndex:1]];
-        NSString *url   = [self sanitizeURL:[s substringWithRange:[m rangeAtIndex:2]]];
+        NSString *url   = [self sanitizeURL:urlFor([s substringWithRange:[m rangeAtIndex:2]])];
         return [NSString stringWithFormat:@"<a href=\"%@\">%@</a>", url, label];
+    });
+    // Targets that weren't part of a link go back as typed.
+    s = subBlock(@"\x04[0-9]+\x05", ^NSString *(NSTextCheckingResult *m){
+        return urlFor([s substringWithRange:m.range]);
     });
 
     for (NSUInteger i = 0; i < slots.count; i++) {
@@ -1947,7 +2206,6 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     NSString *codeBg     = dark ? @"#242424" : @"#E8E6E3";
     NSString *tableBdr   = dark ? @"#444444" : @"#C8C6C3";
     NSString *borderColor= dark ? @"#444444" : @"#C8C6C3";
-    NSString *checkColor = dark ? @"#7FBBE0" : @"#2458A5";
 
     NSMutableString *out = [NSMutableString string];
     NSArray<NSString *> *lines = [rawMD componentsSeparatedByString:@"\n"];
@@ -1957,11 +2215,43 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     __block BOOL inOL     = NO;
     __block NSUInteger olCounter = 0;
     __block NSMutableString *para = [NSMutableString string];
+    __block NSMutableString *paraRaw = [NSMutableString string];   // same lines, "\n"-joined
+
+    // Opening of a code block with its copy icon; close with "</pre></div>".
+    NSString *codeBlockOpen = [NSString stringWithFormat:
+        @"<div class='code-block'>"
+        "<button class='copy-btn' onclick='copyCode(this)' title='Copy' aria-label='Copy code'>"
+        "<svg class='ic-copy' viewBox='0 0 16 16' width='15' height='15' fill='none'"
+        " stroke='currentColor' stroke-width='1.4' stroke-linejoin='round'>"
+        "<rect x='5.5' y='5.5' width='8' height='8' rx='1.5'/>"
+        "<path d='M10.5 3.5v-.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h.5'/></svg>"
+        "<svg class='ic-check' viewBox='0 0 16 16' width='15' height='15' fill='none'"
+        " stroke='currentColor' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'>"
+        "<path d='M3.5 8.5l3 3 6-7'/></svg>"
+        "</button>"
+        "<pre class='code-pre' style='background:%@;'>",
+        codeBg];
 
     void (^flushPara)(void) = ^{
         if (!para.length) return;
+        // A paragraph that is one `code span` and nothing else is shown as a
+        // code block with a copy icon, keeping its line breaks for copying.
+        NSString *raw = [paraRaw stringByTrimmingCharactersInSet:
+                         [NSCharacterSet whitespaceCharacterSet]];
+        if (raw.length > 2 && [raw hasPrefix:@"`"] && [raw hasSuffix:@"`"]) {
+            NSString *inner = [raw substringWithRange:NSMakeRange(1, raw.length - 2)];
+            if ([inner rangeOfString:@"`"].location == NSNotFound &&
+                [inner stringByTrimmingCharactersInSet:
+                    [NSCharacterSet whitespaceAndNewlineCharacterSet]].length) {
+                [out appendFormat:@"%@%@</pre></div>\n", codeBlockOpen, [self htmlEscape:inner]];
+                [para setString:@""];
+                [paraRaw setString:@""];
+                return;
+            }
+        }
         [out appendFormat:@"<p>%@</p>\n", [self applyInlineMarkdown:[para copy]]];
         [para setString:@""];
+        [paraRaw setString:@""];
     };
     void (^closeLists)(void) = ^{
         if (inOL) { inOL = NO; olCounter = 0; }
@@ -1983,11 +2273,7 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
 
         if ([line hasPrefix:@"```"] || [line hasPrefix:@"~~~"]) {
             flushPara(); closeLists();
-            [out appendFormat:
-                @"<div class='code-block'>"
-                "<button class='copy-btn' onclick='copyCode(this)'>Copy</button>"
-                "<pre class='code-pre' style='background:%@;'>",
-                codeBg];
+            [out appendString:codeBlockOpen];
             inFence = YES;
             continue;
         }
@@ -2121,16 +2407,15 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
         }
 
         // GFM task list
-        if (line.length >= 6 &&
-            ([line hasPrefix:@"- [ ] "] || [line hasPrefix:@"- [x] "] || [line hasPrefix:@"- [X] "])) {
+        // data-line is the source line index, so a click can update the Markdown.
+        if ([self isTaskLine:line]) {
             flushPara();
             if (inOL) { inOL = NO; olCounter = 0; }
-            BOOL checked = ![line hasPrefix:@"- [ ] "];
-            NSString *bullet = checked
-                ? [NSString stringWithFormat:@"<font color='%@'>&#x25cf;</font>", checkColor]
-                : @"<font color='#999999'>&#x25cb;</font>";
-            [out appendFormat:@"<p style='margin:0 0 .3em 4px;'>%@&nbsp;%@</p>\n",
-                bullet, [self applyInlineMarkdown:[line substringFromIndex:6]]];
+            BOOL checked = [line characterAtIndex:3] != ' ';
+            [out appendFormat:@"<div class='task'><input type='checkbox' data-line='%lu'%@"
+                               " onchange='toggleTask(this)'><span>%@</span></div>\n",
+                (unsigned long)i, checked ? @" checked" : @"",
+                [self applyInlineMarkdown:[line substringFromIndex:6]]];
             continue;
         }
 
@@ -2168,8 +2453,9 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
 
         // Paragraph
         closeLists();
-        if (para.length) [para appendString:@" "];
+        if (para.length) { [para appendString:@" "]; [paraRaw appendString:@"\n"]; }
         [para appendString:line];
+        [paraRaw appendString:line];
     }
 
     flushPara();

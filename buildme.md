@@ -23,8 +23,37 @@ Build and distribution steps for Notepad (macOS, arm64).
 make          # Build Notepad.app (ad-hoc signed)
 make run      # Build and launch
 make install  # Build and copy to /Applications
+make dmg      # Build Notepad.dmg (Notepad.app + Applications shortcut)
 make clean    # Remove build artifacts
 ```
+
+### How signing works
+
+`make` signs the app in a temporary folder (`$TMPDIR/notepad-build`), checks
+it with `codesign --verify --deep --strict`, then copies it back to the
+project folder. `make install` and `make dmg` use the clean signed copy from
+the temporary folder.
+
+This is because iCloud Desktop & Documents sync re-adds Finder attributes to
+files in synced folders, and `codesign` refuses them with "resource fork,
+Finder information, or similar detritus not allowed". If you still see that
+error, build from a folder outside iCloud (for example `~/Developer`).
+
+### Switching between a Homebrew install and a local build
+
+```bash
+brew uninstall --cask --force notepad   # remove the Homebrew copy
+make install                            # install your build
+```
+
+Homebrew does not track a `make install` copy. Before going back to the cask,
+delete it (`rm -rf /Applications/Notepad.app`), or `brew install` stops with
+"already an App at /Applications/Notepad.app".
+
+### Checking a build
+
+The status bar shows the version (for example `v2.3.0`). Manual checks for the
+Markdown preview are P1 to P12 in `regression-checklist.md`.
 
 By default `SIGN_ID = -` (ad-hoc). An ad-hoc build runs only on the build
 machine; Gatekeeper blocks it on any machine that receives it through a
@@ -85,31 +114,51 @@ spctl --assess --type execute --verbose Notepad.app   # after notarization
 
 ## Release checklist
 
+Pushing a `v*` tag runs `.github/workflows/release.yml`
+(spec: `docs/release-workflow.md`). It checks the version, then either
+publishes or syncs the Homebrew tap. Every check is listed in
+`regression-checklist.md`; if any fails, nothing is published.
+
 1. Bump the version in `Info.plist` (`CFBundleVersion` and
    `CFBundleShortVersionString`) and the badge in `README.md`.
-2. Add a dated entry to `CHANGELOG.md`.
-3. `make dmg SIGN_ID="…"`, then notarize and staple (above).
-4. Commit, tag the release, and push.
-5. Publish a GitHub release whose tag is `v<version>` with `Notepad.dmg`
-   attached (the Homebrew cask downloads this exact asset name):
+2. Add a dated `## [<version>]` entry to `CHANGELOG.md`.
+3. Commit and push to `main`.
+4. Release it one of two ways:
+
+   **A. Signed and notarized (for other Macs).** Build, notarize and staple
+   locally (above), then create the release with the DMG. This also creates
+   and pushes the tag:
 
    ```bash
    gh release create "v<version>" Notepad.dmg --title "<version>" --notes "…"
    ```
 
-6. **Update the Homebrew tap** so `brew install --cask jayclark5150/tap/notepad`
-   serves the new version. In the
-   [`jayclark5150/homebrew-tap`](https://github.com/jayclark5150/homebrew-tap)
-   repo, edit `Casks/notepad.rb`:
-   - set `version` to the new version;
-   - set `sha256` to the DMG hash: `shasum -a 256 Notepad.dmg`;
-   - keep the `url` pointing at `.../download/v#{version}/Notepad.dmg`;
-   - run `brew style Casks/notepad.rb` (should report no offenses), then
-     commit and push.
+   The workflow sees the existing release, leaves it alone, and updates the
+   tap to that DMG's sha256 (TAP-SYNC mode).
 
-   The cask `version`/`sha256` must match the uploaded DMG exactly, or the
-   install fails the checksum. Verify end to end with:
+   **B. CI build (ad-hoc signed).** Push the tag only:
+
+   ```bash
+   git tag "v<version>" && git push origin "v<version>"
+   ```
+
+   The workflow builds `Notepad.dmg`, creates the release and updates the tap
+   (PUBLISH mode). Ad-hoc builds are blocked by Gatekeeper on other Macs.
+
+   Do not push the tag before running `gh release create` in path A, or CI
+   publishes its own ad-hoc build first.
+
+5. Check the run summary on the Actions tab: it names the mode and every
+   check's result. Then verify end to end:
 
    ```bash
    brew update && brew upgrade --cask notepad   # or: brew install --cask jayclark5150/tap/notepad
    ```
+
+To preview a release without publishing, run the workflow from the Actions tab
+(**Run workflow**) with the tag and `dry_run` checked. It builds the DMG,
+runs every check and keeps the DMG as a run artifact.
+
+The tap needs the `TAP_TOKEN` repository secret (push access to
+`jayclark5150/homebrew-tap`). The cask `url` must keep pointing at
+`.../download/v#{version}/Notepad.dmg`; the workflow refuses to run otherwise.
