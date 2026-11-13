@@ -65,6 +65,9 @@ Spec: `docs/preview-features.md`.
 | P11 | Light and dark mode: highlight, checkboxes and copy icon are readable | 2026-11-13 | Theme regressions |
 | P12 | A paragraph that is only `` `cmd` `` (one line, or several lines inside one pair of backticks) shows as a code block with the copy icon, and copying keeps the line breaks; `Run `make` now` stays inline | 2026-11-13 | Copy icon missing on standalone code; prose code turned into blocks |
 | P13 | Open a `.docx`: the toolbar Style popup is about 130 pt wide and switches heading styles; `make` prints no deprecation warnings | 2026-11-13 | Toolbar sizing broken by the Auto Layout change |
+| P14 | In a `.docx`: B, I, U, S toolbar buttons are enabled; each toggles its style on the selection, on and off; Cmd+Z undoes it; the title shows edited | 2026-11-13 | F10: buttons permanently disabled |
+| P15 | In a `.docx` with nothing selected: Cmd+B then typing gives bold text | 2026-11-13 | Typing attributes not updated |
+| P16 | In a `.md`: select a word, Cmd+B gives `**word**`, Cmd+B again removes it; Cmd+I on a bold word gives `***word***`; Format > Underline is greyed out; in a `.txt` all four are greyed out | 2026-11-13 | Marker toggling breaking bold/italic combinations |
 
 ## Findings log
 
@@ -79,3 +82,4 @@ Spec: `docs/preview-features.md`.
 | F7 | 2026-11-13 | Cmd+Z in the preview does not undo a task tick (the web view has focus). | Open: undo from the editor (P8) |
 | F8 | 2026-11-13 | `make` failed at codesign with "resource fork, Finder information, or similar detritus not allowed" when building in an iCloud-synced folder (~/Documents): sync re-adds Finder attributes after `xattr -cr`. | Fixed: the Makefile signs and verifies a copy in `$TMPDIR/notepad-build`; `dmg` and `install` copy from that clean signed copy |
 | F9 | 2026-11-13 | The first v2.3.0 upload had a 2.3.0 `Info.plist` but a 2.2.2 binary (old "Copied!" text, none of the new code). R11 only checked the plist version. | Fixed in 2.3.1: source fingerprint in the binary (`make`, R21) and clean checkout at the tag (R6). The second upload had the same 2.2.2 binary, which fits a working copy whose main.mm was reverted outside git (likely iCloud sync of ~/Documents); fingerprint alone cannot catch that, R6 can. Build releases from a fresh clone outside iCloud |
+| F10 | 2026-11-13 | Bold/Italic/Underline/Strikethrough toolbar buttons and menu items were always disabled: `toggleBoldface:` etc. are UIKit names with no handler in AppKit, so the responder chain found no target (present since 1.4.0). | Fixed in 2.3.2: handlers in AppDelegate (P14 to P16) |

@@ -1,6 +1,7 @@
 # Changelog
 
 ## [2.3.2] - 2026-11-13
+- **Fix**: Bold, Italic, Underline and Strikethrough (toolbar buttons, Format menu, Cmd+B / Cmd+I / Cmd+U) did nothing and were always greyed out: their actions had no handler on macOS. In Word documents they now toggle real formatting on the selection (or for the next typed text), with undo; in Markdown files Bold, Italic and Strikethrough add or remove `**`, `*` and `~~` around the selection (Underline is unavailable, as Markdown has none)
 - **Build**: fix the two compiler warnings: the toolbar Heading Style popup now gets its 130 pt width from Auto Layout instead of the `NSToolbarItem` `minSize`/`maxSize` properties deprecated in macOS 12
 
 ## [2.3.1] - 2026-11-13
