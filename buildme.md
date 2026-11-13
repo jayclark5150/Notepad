@@ -23,8 +23,37 @@ Build and distribution steps for Notepad (macOS, arm64).
 make          # Build Notepad.app (ad-hoc signed)
 make run      # Build and launch
 make install  # Build and copy to /Applications
+make dmg      # Build Notepad.dmg (Notepad.app + Applications shortcut)
 make clean    # Remove build artifacts
 ```
+
+### How signing works
+
+`make` signs the app in a temporary folder (`$TMPDIR/notepad-build`), checks
+it with `codesign --verify --deep --strict`, then copies it back to the
+project folder. `make install` and `make dmg` use the clean signed copy from
+the temporary folder.
+
+This is because iCloud Desktop & Documents sync re-adds Finder attributes to
+files in synced folders, and `codesign` refuses them with "resource fork,
+Finder information, or similar detritus not allowed". If you still see that
+error, build from a folder outside iCloud (for example `~/Developer`).
+
+### Switching between a Homebrew install and a local build
+
+```bash
+brew uninstall --cask --force notepad   # remove the Homebrew copy
+make install                            # install your build
+```
+
+Homebrew does not track a `make install` copy. Before going back to the cask,
+delete it (`rm -rf /Applications/Notepad.app`), or `brew install` stops with
+"already an App at /Applications/Notepad.app".
+
+### Checking a build
+
+The status bar shows the version (for example `v2.3.0`). Manual checks for the
+Markdown preview are P1 to P12 in `regression-checklist.md`.
 
 By default `SIGN_ID = -` (ad-hoc). An ad-hoc build runs only on the build
 machine; Gatekeeper blocks it on any machine that receives it through a

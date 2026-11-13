@@ -89,6 +89,18 @@ A document editor for macOS. Open and edit plain text, Markdown, and Word docume
 | Preview bigger / smaller | Cmd+Option+= / Cmd+Option+- |
 | Preview actual size | Cmd+Option+0 |
 
+### Markdown in the preview
+
+| Write | Preview shows |
+|---|---|
+| `- [ ] task` / `- [x] done` | A checkbox you can click; the file is updated |
+| `:joy:`, `:+1:`, `:tada:` | 😂 👍 🎉 (about 500 common GitHub names) |
+| `==highlight==` | Highlighted text |
+| `H~2~O` | Subscript |
+| `X^2^` | Superscript |
+| `~~text~~` | Strikethrough |
+| A fenced code block, or a paragraph that is only `` `code` `` | Code block with a copy icon |
+
 ## How DOCX editing works
 
 When you open a `.docx` file the app loads it as native rich text using `NSAttributedString` with `NSOfficeOpenXMLTextDocumentType`. You can edit bold, italic, underline, strikethrough, text alignment, and heading font sizes directly. When you save, the rich text is written back to a valid `.docx` file with all formatting preserved.
@@ -129,6 +141,17 @@ make run      # Build and launch
 make install  # Build and copy to /Applications
 make dmg      # Build Notepad.dmg (drag-to-Applications installer)
 make clean    # Remove build artifacts
+```
+
+Building inside an iCloud-synced folder (Desktop or Documents) works: the
+Makefile signs a copy in a temporary folder, because iCloud keeps re-adding
+Finder attributes that `codesign` rejects.
+
+To switch from the Homebrew install to your own build:
+
+```bash
+brew uninstall --cask --force notepad
+make install
 ```
 
 By default the app is ad-hoc signed (runs only on the build machine). For a distributable build:
