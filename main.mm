@@ -1491,6 +1491,27 @@ static BOOL NPRunHasMarker(NSUInteger run, NSString *marker) {
     [self loadFileAtPath:path];
 }
 
+// Looks at the first bytes of a file. Returns @"docx" (zip with Word parts),
+// @"doc" (OLE compound file), @"binary" (other zip, or NUL bytes without a
+// UTF-16 byte-order mark), or nil when it looks like text.
+- (NSString *)sniffedFormatAtPath:(NSString *)path {
+    NSFileHandle *fh = [NSFileHandle fileHandleForReadingAtPath:path];
+    NSData *head = [fh readDataOfLength:64 * 1024];
+    [fh closeFile];
+    if (head.length < 4) return nil;
+    const unsigned char *b = (const unsigned char *)head.bytes;
+    if (b[0] == 'P' && b[1] == 'K' && b[2] == 3 && b[3] == 4) {
+        NSData *word = [@"word/" dataUsingEncoding:NSASCIIStringEncoding];
+        return [head rangeOfData:word options:0 range:NSMakeRange(0, head.length)].location != NSNotFound
+            ? @"docx" : @"binary";
+    }
+    static const unsigned char ole[8] = {0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1};
+    if (head.length >= 8 && memcmp(b, ole, 8) == 0) return @"doc";
+    BOOL utf16BOM = (b[0] == 0xFF && b[1] == 0xFE) || (b[0] == 0xFE && b[1] == 0xFF);
+    if (!utf16BOM && memchr(b, 0, head.length)) return @"binary";
+    return nil;
+}
+
 - (BOOL)loadFileAtPath:(NSString *)path {
     static const long long kMaxFileSize = 100LL * 1024 * 1024;
     NSNumber *fileSize = [[NSFileManager defaultManager]
@@ -1508,6 +1529,18 @@ static BOOL NPRunHasMarker(NSUInteger run, NSString *marker) {
 
     NSString *ext  = path.pathExtension.lowercaseString;
     NSError  *err  = nil;
+
+    // Trust the file's contents over its name: a Word file without its
+    // extension opens as Word, and binary files are refused, because saving
+    // one decoded as text would destroy it.
+    NSString *sniffed = [self sniffedFormatAtPath:path];
+    if ([sniffed isEqualToString:@"binary"]) {
+        [self showError:[NSString stringWithFormat:
+            @"“%@” isn’t a text, Markdown or Word file, so Notepad can’t open it.",
+            path.lastPathComponent]];
+        return NO;
+    }
+    if (sniffed) ext = sniffed;
 
     if ([ext isEqualToString:@"docx"] || [ext isEqualToString:@"doc"]) {
         _fileFormat = ext;
