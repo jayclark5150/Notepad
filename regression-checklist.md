@@ -71,6 +71,9 @@ Spec: `docs/preview-features.md`.
 | P17 | Copy a `.docx`, remove its extension, open it: it opens as Word ([DOCX]), and Save keeps it a valid Word file | 2026-11-13 | F11: Word file opened as text |
 | P18 | Open a `.png` or `.zip` (also renamed to `.txt`): Notepad shows "isn't a text, Markdown or Word file" and opens nothing | 2026-11-13 | F11: binary decoded as Latin-1 and destroyed on save |
 | P19 | A UTF-16 text file with a byte-order mark and a Latin-1 `.txt` still open as text | 2026-11-13 | Binary check rejecting real text |
+| P20 | Type `The quick **brown** fox *over* the ~~lazy~~ dog.` and move the cursor away: no extra gaps around the styled words; cursor into a word shows its markers again | 2026-11-13 | F12: hidden markers kept their width |
+| P21 | `## Heading` and `> quote` sit flush left when the cursor is on another line; `[link](https://example.com/long/url)` shows only "link" with no trailing gap | 2026-11-13 | F12 for line markers and links |
+| P22 | Click right after a hidden `**bold**` and type: new text is normal size and visible straight away | 2026-11-13 | Typing inherits the hidden tiny font |
 
 ## Findings log
 
@@ -87,3 +90,4 @@ Spec: `docs/preview-features.md`.
 | F9 | 2026-11-13 | The first v2.3.0 upload had a 2.3.0 `Info.plist` but a 2.2.2 binary (old "Copied!" text, none of the new code). R11 only checked the plist version. | Fixed in 2.3.1: source fingerprint in the binary (`make`, R21) and clean checkout at the tag (R6). The second upload had the same 2.2.2 binary, which fits a working copy whose main.mm was reverted outside git (likely iCloud sync of ~/Documents); fingerprint alone cannot catch that, R6 can. Build releases from a fresh clone outside iCloud |
 | F10 | 2026-11-13 | Bold/Italic/Underline/Strikethrough toolbar buttons and menu items were always disabled: `toggleBoldface:` etc. are UIKit names with no handler in AppKit, so the responder chain found no target (present since 1.4.0). | Fixed in 2.3.2: handlers in AppDelegate (P14 to P16) |
 | F11 | 2026-11-13 | `Hi Jane` (a Word file without `.docx`) opened as [TXT]: format came from the extension only and the Latin-1 fallback accepts any bytes, so saving would have overwritten the document with garbage. | Fixed in 2.3.2: content sniffing (zip with `word/` = docx, OLE = doc, other zip or NUL bytes = refused) in `loadFileAtPath:` (P17 to P19) |
+| F12 | 2026-11-13 | WYSIWYM editor hid Markdown markers with the background colour only, so they kept their width: visible gaps around bold/italic/strike words, indented headings and quotes, long blank runs where link URLs were. | Fixed in 2.3.3: near-zero-width font for hidden markers (P20 to P22) |
