@@ -16,6 +16,7 @@ Any FAIL puts the run in PREVIEW (halted) mode: nothing is published or pushed.
 | R3 | `Info.plist` CFBundleVersion = tag | 2026-11-13 | Same |
 | R4 | README version badge = tag | 2026-11-13 | Release checklist step 1 skipped |
 | R5 | CHANGELOG has `## [X.Y.Z]` | 2026-11-13 | Release checklist step 2 skipped |
+| R6 | Git checkout with no changes to tracked files, and HEAD is the tag's commit | 2026-11-13 | F9: an old main.mm built under a new version number |
 | R7 | `Notepad.dmg` exists and is non-empty | 2026-11-13 | F1: release shipped `Notepad.zip` |
 | R8 | DMG mounts | 2026-11-13 | Corrupt image |
 | R9 | DMG root has `Notepad.app` | 2026-11-13 | "App source is not there" from the cask |
@@ -30,6 +31,7 @@ Any FAIL puts the run in PREVIEW (halted) mode: nothing is published or pushed.
 | R18 | Asset downloaded back from the release hashes to the cask sha256 | 2026-11-13 | Users get a checksum failure |
 | R19 | `TAP_TOKEN` set (real runs) | 2026-11-13 | Release published, tap never updated |
 | R20 | Existing release has `Notepad.dmg`; a manual release is never replaced | 2026-11-13 | F2: CI overwriting or colliding with a notarized manual release |
+| R21 | App binary contains `NOTEPAD-SOURCE-SHA256:<sha256 of main.mm>` (also enforced by `make` before signing) | 2026-11-13 | F9: stale binary shipped under a new version |
 | W1 | Warn when the app is ad-hoc signed | 2026-11-13 | F3 (warning only) |
 
 Local run of the portable checks (R1 to R5, R13 to R18); R8 to R12 need macOS:
@@ -75,3 +77,4 @@ Spec: `docs/preview-features.md`.
 | F6 | 2026-11-13 | Preview applied italic/bold rules inside link URLs, so `my_file_name.md` became `my<em>file</em>name.md` and broke the link. | Fixed in 2.3.0: URLs are parked before inline rules (P5) |
 | F7 | 2026-11-13 | Cmd+Z in the preview does not undo a task tick (the web view has focus). | Open: undo from the editor (P8) |
 | F8 | 2026-11-13 | `make` failed at codesign with "resource fork, Finder information, or similar detritus not allowed" when building in an iCloud-synced folder (~/Documents): sync re-adds Finder attributes after `xattr -cr`. | Fixed: the Makefile signs and verifies a copy in `$TMPDIR/notepad-build`; `dmg` and `install` copy from that clean signed copy |
+| F9 | 2026-11-13 | The first v2.3.0 upload had a 2.3.0 `Info.plist` but a 2.2.2 binary (old "Copied!" text, none of the new code). R11 only checked the plist version. | Fixed in 2.3.1: source fingerprint in the binary (`make`, R21) and clean checkout at the tag (R6). The second upload had the same 2.2.2 binary, which fits a working copy whose main.mm was reverted outside git (likely iCloud sync of ~/Documents); fingerprint alone cannot catch that, R6 can. Build releases from a fresh clone outside iCloud |

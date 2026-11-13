@@ -39,6 +39,17 @@ files in synced folders, and `codesign` refuses them with "resource fork,
 Finder information, or similar detritus not allowed". If you still see that
 error, build from a folder outside iCloud (for example `~/Developer`).
 
+### Source fingerprint
+
+`make` compiles the SHA-256 of `main.mm` into the app and checks it before
+signing. If the binary was not built from the current `main.mm` (for example
+a stale build), `make` stops with "was not built from the current main.mm";
+run `make clean` and build again. To check any built app:
+
+```bash
+bash scripts/release-gate.sh binary Notepad.app/Contents/MacOS/Notepad
+```
+
 ### Switching between a Homebrew install and a local build
 
 ```bash
@@ -126,8 +137,10 @@ publishes or syncs the Homebrew tap. Every check is listed in
 4. Release it one of two ways:
 
    **A. Signed and notarized (for other Macs).** Build, notarize and staple
-   locally (above), then create the release with the DMG. This also creates
-   and pushes the tag:
+   locally (above), check the DMG with
+   `bash scripts/release-gate.sh asset Notepad.dmg <version>` (it confirms the
+   app inside was built from this `main.mm`), then create the release with
+   the DMG. This also creates and pushes the tag:
 
    ```bash
    gh release create "v<version>" Notepad.dmg --title "<version>" --notes "…"

@@ -9,6 +9,7 @@
 #    release-gate.sh cask       <cask.rb>              cask matches the asset name
 #    release-gate.sh cask-final <cask.rb> <version> <sha256>
 #    release-gate.sh published  <dmg> <sha256>         downloaded asset == expected
+#    release-gate.sh binary     <path to app binary>   built from this main.mm
 #
 #  Prints PASS/FAIL/WARN per check (also to $GITHUB_STEP_SUMMARY when set)
 #  and exits 1 if any check failed.
@@ -44,10 +45,53 @@ stage_pre() {
     [ "$build" = "$ver" ] && pass "R3 Info.plist CFBundleVersion = $ver" \
                           || fail "R3 Info.plist CFBundleVersion is '$build', tag says '$ver'"
 
+    # R6: the files being built are exactly the tagged commit. Catches a
+    # working copy changed behind git's back (e.g. iCloud restoring an old
+    # main.mm), which the version files alone cannot show.
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+        local dirty tagc headc
+        dirty=$(git status --porcelain --untracked-files=no 2>/dev/null)
+        [ -z "$dirty" ] && pass "R6 working tree has no changes to tracked files" \
+                        || fail "R6 tracked files differ from git: $(echo "$dirty" | awk '{print $2}' | tr '\n' ' ')"
+        if tagc=$(git rev-parse -q --verify "$tag^{commit}" 2>/dev/null); then
+            headc=$(git rev-parse HEAD)
+            [ "$tagc" = "$headc" ] && pass "R6 HEAD is the $tag commit" \
+                                   || fail "R6 HEAD is ${headc:0:7}, $tag is ${tagc:0:7}: check out $tag before building"
+        else
+            warn "R6 tag $tag does not exist yet: HEAD not compared"
+        fi
+    else
+        fail "R6 not a git checkout: cannot prove the source matches $tag"
+    fi
+
     grep -qF "badge/version-$ver-" README.md && pass "R4 README version badge = $ver" \
                                               || fail "R4 README version badge is not $ver"
     grep -qF "## [$ver]" CHANGELOG.md && pass "R5 CHANGELOG has a [$ver] entry" \
                                       || fail "R5 CHANGELOG has no '## [$ver]' entry"
+}
+
+# R21: the binary carries the SHA-256 of main.mm it was compiled from
+# (Makefile -DNOTEPAD_SOURCE_SHA256). Catches a stale binary shipped with a
+# new Info.plist. Run from the repo root at the commit being released.
+check_source_stamp() {
+    local bin="$1" want
+    if ! grep -q 'NOTEPAD_SOURCE_SHA256' main.mm 2>/dev/null; then
+        warn "R21 skipped: this main.mm has no source fingerprint (before 2.3.1)"
+        return
+    fi
+    want=$(sha256_of main.mm)
+    if LC_ALL=C grep -aq "NOTEPAD-SOURCE-SHA256:$want" "$bin"; then
+        pass "R21 app binary was built from this main.mm ($want)"
+    else
+        local got
+        got=$(LC_ALL=C grep -ao 'NOTEPAD-SOURCE-SHA256:[0-9a-z]*' "$bin" | head -1)
+        fail "R21 app binary was not built from this main.mm (binary has '${got:-no fingerprint}', source is $want)"
+    fi
+}
+
+stage_binary() {
+    local bin="$1"
+    if [ -f "$bin" ]; then check_source_stamp "$bin"; else fail "R21 $bin not found"; fi
 }
 
 stage_asset() {
@@ -78,6 +122,8 @@ stage_asset() {
         appver=$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist" 2>/dev/null)
         [ "$appver" = "$ver" ] && pass "R11 app inside DMG is version $ver" \
                                || fail "R11 app inside DMG is version '$appver', expected '$ver'"
+
+        check_source_stamp "$app/Contents/MacOS/Notepad"
 
         if codesign --verify --deep --strict "$app" 2>/dev/null; then pass "R12 codesign --verify --deep --strict"
         else fail "R12 app signature does not verify"; fi
@@ -130,8 +176,9 @@ case "$stage" in
     asset)      [ $# -eq 2 ] || { echo "usage: $0 asset <dmg> <version>"; exit 2; };       stage_asset "$@" ;;
     cask)       [ $# -eq 1 ] || { echo "usage: $0 cask <cask.rb>"; exit 2; };              stage_cask "$@" ;;
     cask-final) [ $# -eq 3 ] || { echo "usage: $0 cask-final <cask.rb> <ver> <sha>"; exit 2; }; stage_cask_final "$@" ;;
+    binary)     [ $# -eq 1 ] || { echo "usage: $0 binary <path>"; exit 2; };               stage_binary "$@" ;;
     published)  [ $# -eq 2 ] || { echo "usage: $0 published <dmg> <sha256>"; exit 2; };    stage_published "$@" ;;
-    *) echo "usage: $0 {pre|asset|cask|cask-final|published} ..."; exit 2 ;;
+    *) echo "usage: $0 {pre|asset|cask|cask-final|published|binary} ..."; exit 2 ;;
 esac
 summary ""
 
