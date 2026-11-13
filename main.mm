@@ -747,10 +747,12 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
         }
         _headingStylePopup.target = self;
         _headingStylePopup.action = @selector(headingPopupChanged:);
+        // Fixed width via Auto Layout; NSToolbarItem minSize/maxSize are
+        // deprecated since macOS 12. Height comes from the popup itself.
+        _headingStylePopup.translatesAutoresizingMaskIntoConstraints = NO;
+        [_headingStylePopup.widthAnchor constraintEqualToConstant:130].active = YES;
         item.view = _headingStylePopup;
         item.label = @"Style";
-        item.minSize = NSMakeSize(130, 24);
-        item.maxSize = NSMakeSize(130, 24);
     }
     return item;
 }
@@ -770,6 +772,169 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     [_textView.textStorage addAttribute:NSFontAttributeName value:font range:paraRange];
     _isDirty = YES;
     [self updateTitle];
+}
+
+// ── Bold / Italic / Underline / Strikethrough ─────────────
+// Targets of the toolbar buttons and Format menu (nil-targeted, so they reach
+// the app delegate through the responder chain). AppKit has no handlers for
+// these selectors, which left the buttons permanently disabled before 2.3.2.
+// Word documents get real attributes; Markdown gets **, *, ~~ markers.
+
+- (BOOL)canApplyInlineStyle:(SEL)action {
+    if (!_editMode) return NO;
+    if ([self isRichTextMode]) return YES;
+    if (![_fileFormat isEqualToString:@"md"]) return NO;
+    return action != @selector(toggleUnderline:);   // Markdown has no underline
+}
+
+- (IBAction)toggleBoldface:(id)sender     { [self toggleInlineStyle:_cmd]; }
+- (IBAction)toggleItalic:(id)sender       { [self toggleInlineStyle:_cmd]; }
+- (IBAction)toggleUnderline:(id)sender    { [self toggleInlineStyle:_cmd]; }
+- (IBAction)toggleStrikethrough:(id)sender { [self toggleInlineStyle:_cmd]; }
+
+- (void)toggleInlineStyle:(SEL)action {
+    if (![self canApplyInlineStyle:action]) { NSBeep(); return; }
+    if ([self isRichTextMode]) {
+        if (action == @selector(toggleBoldface:))      [self toggleRichTrait:NSBoldFontMask];
+        else if (action == @selector(toggleItalic:))   [self toggleRichTrait:NSItalicFontMask];
+        else if (action == @selector(toggleUnderline:))
+            [self toggleRichLineStyle:NSUnderlineStyleAttributeName];
+        else [self toggleRichLineStyle:NSStrikethroughStyleAttributeName];
+    } else {
+        if (action == @selector(toggleBoldface:))      [self toggleMarkdownMarker:@"**"];
+        else if (action == @selector(toggleItalic:))   [self toggleMarkdownMarker:@"*"];
+        else if (action == @selector(toggleStrikethrough:)) [self toggleMarkdownMarker:@"~~"];
+    }
+}
+
+// Applies an attribute change to the selection as one undoable step, or to the
+// typing attributes when nothing is selected.
+- (void)changeSelectionAttributes:(void (^)(NSTextStorage *ts, NSRange range))change
+                    typingChange:(NSDictionary *(^)(NSDictionary *attrs))typingChange {
+    NSRange sel = _textView.selectedRange;
+    if (sel.location == NSNotFound) return;
+    if (sel.length == 0) {
+        _textView.typingAttributes = typingChange(_textView.typingAttributes);
+        return;
+    }
+    if (![_textView shouldChangeTextInRange:sel replacementString:nil]) return;
+    NSTextStorage *ts = _textView.textStorage;
+    [ts beginEditing];
+    change(ts, sel);
+    [ts endEditing];
+    [_textView didChangeText];
+}
+
+- (void)toggleRichTrait:(NSFontTraitMask)trait {
+    NSFontManager *fm = [NSFontManager sharedFontManager];
+    NSRange sel = _textView.selectedRange;
+    // Remove the trait only if the whole selection already has it.
+    __block BOOL allHave = YES;
+    if (sel.length) {
+        [_textView.textStorage enumerateAttribute:NSFontAttributeName inRange:sel options:0
+                                       usingBlock:^(id font, NSRange r, BOOL *stop) {
+            (void)r;
+            if (!font || !([fm traitsOfFont:font] & trait)) { allHave = NO; *stop = YES; }
+        }];
+    } else {
+        NSFont *f = _textView.typingAttributes[NSFontAttributeName];
+        allHave = f && ([fm traitsOfFont:f] & trait);
+    }
+    NSFont *(^convert)(NSFont *) = ^NSFont *(NSFont *f) {
+        if (!f) f = [self currentFont];
+        return allHave ? [fm convertFont:f toNotHaveTrait:trait] : [fm convertFont:f toHaveTrait:trait];
+    };
+    [self changeSelectionAttributes:^(NSTextStorage *ts, NSRange range) {
+        [ts enumerateAttribute:NSFontAttributeName inRange:range options:0
+                    usingBlock:^(id font, NSRange r, BOOL *stop) {
+            (void)stop;
+            [ts addAttribute:NSFontAttributeName value:convert(font) range:r];
+        }];
+    } typingChange:^NSDictionary *(NSDictionary *attrs) {
+        NSMutableDictionary *m = [attrs mutableCopy];
+        m[NSFontAttributeName] = convert(attrs[NSFontAttributeName]);
+        return m;
+    }];
+}
+
+- (void)toggleRichLineStyle:(NSAttributedStringKey)key {
+    NSRange sel = _textView.selectedRange;
+    __block BOOL allHave = YES;
+    if (sel.length) {
+        [_textView.textStorage enumerateAttribute:key inRange:sel options:0
+                                       usingBlock:^(id v, NSRange r, BOOL *stop) {
+            (void)r;
+            if ([v integerValue] == NSUnderlineStyleNone) { allHave = NO; *stop = YES; }
+        }];
+    } else {
+        allHave = [_textView.typingAttributes[key] integerValue] != NSUnderlineStyleNone;
+    }
+    [self changeSelectionAttributes:^(NSTextStorage *ts, NSRange range) {
+        if (allHave) [ts removeAttribute:key range:range];
+        else [ts addAttribute:key value:@(NSUnderlineStyleSingle) range:range];
+    } typingChange:^NSDictionary *(NSDictionary *attrs) {
+        NSMutableDictionary *m = [attrs mutableCopy];
+        if (allHave) [m removeObjectForKey:key]; else m[key] = @(NSUnderlineStyleSingle);
+        return m;
+    }];
+}
+
+// Number of `c` characters running backwards from `loc` (exclusive) or
+// forwards from `loc` (inclusive).
+static NSUInteger NPRunBefore(NSString *s, NSUInteger loc, unichar c) {
+    NSUInteger n = 0;
+    while (loc > n && [s characterAtIndex:loc - n - 1] == c) n++;
+    return n;
+}
+static NSUInteger NPRunAfter(NSString *s, NSUInteger loc, unichar c) {
+    NSUInteger n = 0;
+    while (loc + n < s.length && [s characterAtIndex:loc + n] == c) n++;
+    return n;
+}
+
+// Does a run of `run` marker characters carry this marker? "*" is italic in
+// runs of 1 or 3 (***x*** is bold italic); "**" is bold in runs of 2 or 3.
+static BOOL NPRunHasMarker(NSUInteger run, NSString *marker) {
+    if ([marker isEqualToString:@"*"])  return run == 1 || run == 3;
+    if ([marker isEqualToString:@"**"]) return run == 2 || run == 3;
+    return run == marker.length;                                   // "~~"
+}
+
+- (void)toggleMarkdownMarker:(NSString *)marker {
+    NSString *str = _textView.string;
+    NSRange sel = _textView.selectedRange;
+    if (sel.location == NSNotFound) return;
+    unichar c = [marker characterAtIndex:0];
+    NSUInteger m = marker.length;
+
+    // 1. Markers just outside the selection: **|text|** -> remove them
+    //    (also **|** with an empty selection, undoing an empty pair).
+    NSUInteger before = NPRunBefore(str, sel.location, c);
+    NSUInteger after  = NPRunAfter(str, NSMaxRange(sel), c);
+    if (NPRunHasMarker(before, marker) && NPRunHasMarker(after, marker)) {
+        NSRange outer = NSMakeRange(sel.location - m, sel.length + 2 * m);
+        NSString *inner = [str substringWithRange:sel];
+        [_textView insertText:inner replacementRange:outer];
+        _textView.selectedRange = NSMakeRange(outer.location, inner.length);
+        return;
+    }
+    // 2. Markers inside the selection: |**text**| -> remove them.
+    if (sel.length > 2 * m) {
+        NSString *selText = [str substringWithRange:sel];
+        NSUInteger lead  = NPRunAfter(selText, 0, c);
+        NSUInteger trail = NPRunBefore(selText, selText.length, c);
+        if (lead < selText.length && NPRunHasMarker(lead, marker) && NPRunHasMarker(trail, marker)) {
+            NSString *inner = [selText substringWithRange:NSMakeRange(m, selText.length - 2 * m)];
+            [_textView insertText:inner replacementRange:sel];
+            _textView.selectedRange = NSMakeRange(sel.location, inner.length);
+            return;
+        }
+    }
+    // 3. Otherwise wrap; with no selection, leave the cursor between the markers.
+    NSString *inner = [str substringWithRange:sel];
+    [_textView insertText:[NSString stringWithFormat:@"%@%@%@", marker, inner, marker]
+         replacementRange:sel];
+    _textView.selectedRange = NSMakeRange(sel.location + m, inner.length);
 }
 
 // ── Theme ──────────────────────────────────────────────────
@@ -1326,6 +1491,27 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
     [self loadFileAtPath:path];
 }
 
+// Looks at the first bytes of a file. Returns @"docx" (zip with Word parts),
+// @"doc" (OLE compound file), @"binary" (other zip, or NUL bytes without a
+// UTF-16 byte-order mark), or nil when it looks like text.
+- (NSString *)sniffedFormatAtPath:(NSString *)path {
+    NSFileHandle *fh = [NSFileHandle fileHandleForReadingAtPath:path];
+    NSData *head = [fh readDataOfLength:64 * 1024];
+    [fh closeFile];
+    if (head.length < 4) return nil;
+    const unsigned char *b = (const unsigned char *)head.bytes;
+    if (b[0] == 'P' && b[1] == 'K' && b[2] == 3 && b[3] == 4) {
+        NSData *word = [@"word/" dataUsingEncoding:NSASCIIStringEncoding];
+        return [head rangeOfData:word options:0 range:NSMakeRange(0, head.length)].location != NSNotFound
+            ? @"docx" : @"binary";
+    }
+    static const unsigned char ole[8] = {0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1};
+    if (head.length >= 8 && memcmp(b, ole, 8) == 0) return @"doc";
+    BOOL utf16BOM = (b[0] == 0xFF && b[1] == 0xFE) || (b[0] == 0xFE && b[1] == 0xFF);
+    if (!utf16BOM && memchr(b, 0, head.length)) return @"binary";
+    return nil;
+}
+
 - (BOOL)loadFileAtPath:(NSString *)path {
     static const long long kMaxFileSize = 100LL * 1024 * 1024;
     NSNumber *fileSize = [[NSFileManager defaultManager]
@@ -1343,6 +1529,18 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
 
     NSString *ext  = path.pathExtension.lowercaseString;
     NSError  *err  = nil;
+
+    // Trust the file's contents over its name: a Word file without its
+    // extension opens as Word, and binary files are refused, because saving
+    // one decoded as text would destroy it.
+    NSString *sniffed = [self sniffedFormatAtPath:path];
+    if ([sniffed isEqualToString:@"binary"]) {
+        [self showError:[NSString stringWithFormat:
+            @"“%@” isn’t a text, Markdown or Word file, so Notepad can’t open it.",
+            path.lastPathComponent]];
+        return NO;
+    }
+    if (sniffed) ext = sniffed;
 
     if ([ext isEqualToString:@"docx"] || [ext isEqualToString:@"doc"]) {
         _fileFormat = ext;
@@ -1581,6 +1779,9 @@ static NSString *const kCustomTextColorKey     = @"CustomTextColor";
         item.action == @selector(exportAsEPUB:)  ||
         item.action == @selector(exportAsLatex:))
         return ![self isRichTextMode];
+    if (item.action == @selector(toggleBoldface:) || item.action == @selector(toggleItalic:) ||
+        item.action == @selector(toggleUnderline:) || item.action == @selector(toggleStrikethrough:))
+        return [self canApplyInlineStyle:item.action];
     return YES;
 }
 

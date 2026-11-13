@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.3.2] - 2026-11-13
+- **Fix (data loss)**: a Word document without its `.docx` extension opened as plain text full of zip bytes, and saving would have destroyed it. Notepad now checks a file's contents: Word files open as Word whatever their name, and other binary files (images, archives) are refused instead of being decoded as text
+- **Fix**: Bold, Italic, Underline and Strikethrough (toolbar buttons, Format menu, Cmd+B / Cmd+I / Cmd+U) did nothing and were always greyed out: their actions had no handler on macOS. In Word documents they now toggle real formatting on the selection (or for the next typed text), with undo; in Markdown files Bold, Italic and Strikethrough add or remove `**`, `*` and `~~` around the selection (Underline is unavailable, as Markdown has none)
+- **Build**: fix the two compiler warnings: the toolbar Heading Style popup now gets its 130 pt width from Auto Layout instead of the `NSToolbarItem` `minSize`/`maxSize` properties deprecated in macOS 12
+
 ## [2.3.1] - 2026-11-13
 - **Build**: each build embeds the SHA-256 of `main.mm`; `make` refuses to sign, and the release check refuses to publish, an app binary that was not compiled from the current source (a stale binary with a new `Info.plist` was uploaded as 2.3.0)
 - **Release check**: refuses to release unless the build folder is a clean git checkout at the release tag (catches an old `main.mm` restored by iCloud sync)
