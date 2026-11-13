@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.3.0] - 2026-11-13
+- **Preview: clickable task lists**: tick or clear `- [ ]` / `- [x]` boxes in the preview; the Markdown is updated, the document is marked edited, and the change can be undone from the editor
+- **Preview: copy icon** on code blocks replaces the "Copy" text button and shows a checkmark when copied
+- **Preview: extended Markdown**: emoji shortcodes (`:joy:`), `==highlight==`, subscript `H~2~O`, superscript `X^2^`
+- Task lists also accept `* [ ]` and `+ [ ]`
+- Preview keeps its scroll position when it re-renders
+- **Fix**: underscores, tildes or carets inside link and image URLs are no longer turned into formatting
+
 ## [2.2.2] - 2026-11-11
 - **Fix (data loss)**: dragging a file onto the window now honors the unsaved-changes prompt instead of silently replacing your document
 - **Fix**: Pandoc export now reflects your current edits — unsaved changes are saved first rather than exporting the last-saved version on disk

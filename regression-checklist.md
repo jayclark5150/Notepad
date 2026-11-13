@@ -43,6 +43,25 @@ Manual check after each release:
 
 - [ ] `brew update && brew upgrade --cask notepad` installs the new version on a Mac
 
+## Markdown preview (`main.mm`)
+
+Manual checks on a Mac (`make run`, open a `.md` file, Cmd+\ for the preview).
+Spec: `docs/preview-features.md`.
+
+| ID | Check | Added | Guards against |
+|---|---|---|---|
+| P1 | `:joy:` shows 😂; `:notreal:` and `10:30:45` stay as typed | 2026-11-13 | Shortcodes eating normal colons |
+| P2 | `==very important words==` is highlighted; `a == b == c` is not | 2026-11-13 | Comparisons turned into highlights |
+| P3 | `H~2~O` and `X^2^` render as sub/superscript; `~~flat~~` is still strikethrough | 2026-11-13 | Subscript clashing with strikethrough |
+| P4 | `` `:joy: ==x== H~2~O` `` in backticks renders literally | 2026-11-13 | Formatting inside code |
+| P5 | `[s](http://a.com/my_file_name.md)` and `[h](http://a.com/~user/)` keep their exact URLs | 2026-11-13 | F6: URLs rewritten by inline rules |
+| P6 | `[x](javascript:alert(1))` links to `#` | 2026-11-13 | Script injection via links (2.2.2 fix) |
+| P7 | Clicking a task box flips only that line's `[ ]`/`[x]`, the title shows edited, scroll stays put | 2026-11-13 | Wrong line changed; preview jumping to top |
+| P8 | After a tick, Cmd+\ to the editor and Cmd+Z restores the box | 2026-11-13 | Tick not undoable |
+| P9 | A `- [ ]` line inside a fenced code block shows as code, not a checkbox | 2026-11-13 | Toggling text inside code |
+| P10 | Code-block copy icon copies the block and shows a checkmark | 2026-11-13 | Copy broken by icon change |
+| P11 | Light and dark mode: highlight, checkboxes and copy icon are readable | 2026-11-13 | Theme regressions |
+
 ## Findings log
 
 | ID | Date | Finding | Status |
@@ -52,3 +71,5 @@ Manual check after each release:
 | F3 | 2026-11-13 | The 2.2.2 `Notepad.dmg` on the tap is ad-hoc signed (no Developer ID certificate, not notarized). Gatekeeper blocks it on other Macs. | Open: needs a Developer ID certificate |
 | F4 | 2026-11-13 | `brew upgrade` 2.1.1 to 2.2.2 failed with "App source '/Applications/Notepad.app' is not there" because the installed app had been removed outside brew. Local state, not a pipeline bug. | Workaround: `brew uninstall --cask --force notepad`, then reinstall |
 | F5 | 2026-11-13 | Audit: `GH_TOKEN` and `TAP_TOKEN` were set for the whole job, so the build step could read them. | Fixed: each token is set only on the steps that use it |
+| F6 | 2026-11-13 | Preview applied italic/bold rules inside link URLs, so `my_file_name.md` became `my<em>file</em>name.md` and broke the link. | Fixed in 2.3.0: URLs are parked before inline rules (P5) |
+| F7 | 2026-11-13 | Cmd+Z in the preview does not undo a task tick (the web view has focus). | Open: undo from the editor (P8) |
