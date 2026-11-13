@@ -45,6 +45,25 @@ stage_pre() {
     [ "$build" = "$ver" ] && pass "R3 Info.plist CFBundleVersion = $ver" \
                           || fail "R3 Info.plist CFBundleVersion is '$build', tag says '$ver'"
 
+    # R6: the files being built are exactly the tagged commit. Catches a
+    # working copy changed behind git's back (e.g. iCloud restoring an old
+    # main.mm), which the version files alone cannot show.
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+        local dirty tagc headc
+        dirty=$(git status --porcelain --untracked-files=no 2>/dev/null)
+        [ -z "$dirty" ] && pass "R6 working tree has no changes to tracked files" \
+                        || fail "R6 tracked files differ from git: $(echo "$dirty" | awk '{print $2}' | tr '\n' ' ')"
+        if tagc=$(git rev-parse -q --verify "$tag^{commit}" 2>/dev/null); then
+            headc=$(git rev-parse HEAD)
+            [ "$tagc" = "$headc" ] && pass "R6 HEAD is the $tag commit" \
+                                   || fail "R6 HEAD is ${headc:0:7}, $tag is ${tagc:0:7}: check out $tag before building"
+        else
+            warn "R6 tag $tag does not exist yet: HEAD not compared"
+        fi
+    else
+        fail "R6 not a git checkout: cannot prove the source matches $tag"
+    fi
+
     grep -qF "badge/version-$ver-" README.md && pass "R4 README version badge = $ver" \
                                               || fail "R4 README version badge is not $ver"
     grep -qF "## [$ver]" CHANGELOG.md && pass "R5 CHANGELOG has a [$ver] entry" \
