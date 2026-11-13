@@ -1,54 +1,202 @@
 name: Release
 
+# Publishes Notepad.dmg for a v* tag and points the Homebrew cask at it.
+# Spec: docs/release-workflow.md   Checks: regression-checklist.md
+#
+# Modes (logged in the run summary):
+#   PUBLISH   no GitHub release exists for the tag: build Notepad.dmg, create
+#             the release with it, then update the tap.
+#   TAP-SYNC  a release with Notepad.dmg already exists (made by hand, e.g. a
+#             notarized build): leave the release alone, update the tap to
+#             that asset's sha256.
+#   PREVIEW   dry run, or any regression-gate check failed: nothing is
+#             published or pushed. A failed gate also fails the run.
+
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to release, e.g. v2.2.3'
+        required: true
+      dry_run:
+        description: 'Preview only: build and check, publish nothing'
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
-  build:
+  release:
     runs-on: macos-14  # Apple Silicon (arm64)
     permissions:
       contents: write
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' }}
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
 
-      - name: Generate icon
-        run: bash make_icon.sh
+      # ── Regression gate, part 1: repo versions match the tag ──
+      - name: 'Gate: version checks'
+        id: gate_pre
+        continue-on-error: true
+        run: bash scripts/release-gate.sh pre "$TAG"
 
-      - name: Build app
-        run: make
-
-      - name: Zip app
-        run: zip -r --symlinks Notepad.zip Notepad.app
-
-      - name: Parse version and SHA256
-        id: meta
-        run: |
-          echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
-          echo "sha256=$(shasum -a 256 Notepad.zip | awk '{print $1}')" >> $GITHUB_OUTPUT
-
-      - name: Create GitHub release
-        run: |
-          gh release create "$GITHUB_REF_NAME" Notepad.zip \
-            --title "Notepad $GITHUB_REF_NAME" \
-            --generate-notes
+      # ── Decide the mode from the release's current state ──
+      - name: 'Gate: release state'
+        id: state
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Update homebrew tap
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
         run: |
-          git clone https://x-access-token:${{ secrets.TAP_TOKEN }}@github.com/jayclark5150/homebrew-tap.git
-          cd homebrew-tap
-          sed -i '' \
-            -e 's/version ".*"/version "${{ steps.meta.outputs.version }}"/' \
-            -e 's/sha256 ".*"/sha256 "${{ steps.meta.outputs.sha256 }}"/' \
-            Casks/notepad.rb
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Casks/notepad.rb
-          git commit -m "Update Notepad cask to ${{ steps.meta.outputs.version }}"
-          git push
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          if [ -z "$TAP_TOKEN" ] && [ "$DRY_RUN" != "true" ]; then
+            echo "FAIL  R19 TAP_TOKEN secret is not set; the tap cannot be updated"
+            exit 1
+          fi
+          if assets=$(gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null); then
+            if echo "$assets" | grep -qx 'Notepad.dmg'; then
+              echo "mode=tap-sync" >> "$GITHUB_OUTPUT"
+              echo "PASS  R20 release $TAG exists with Notepad.dmg: TAP-SYNC"
+            else
+              echo "FAIL  R20 release $TAG exists but has no Notepad.dmg asset (has: ${assets//$'\n'/ })"
+              exit 1
+            fi
+          else
+            echo "mode=publish" >> "$GITHUB_OUTPUT"
+            echo "PASS  R20 no release for $TAG yet: PUBLISH"
+          fi
+
+      - name: Build Notepad.dmg
+        if: steps.gate_pre.outcome == 'success' && steps.state.outputs.mode == 'publish'
+        run: |
+          bash make_icon.sh
+          make dmg
+          mkdir -p dist && mv Notepad.dmg dist/Notepad.dmg
+
+      - name: Download existing Notepad.dmg
+        if: steps.gate_pre.outcome == 'success' && steps.state.outputs.mode == 'tap-sync'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release download "$TAG" --pattern Notepad.dmg --dir dist
+
+      # ── Regression gate, part 2: the DMG the cask will download ──
+      - name: 'Gate: DMG checks'
+        id: gate_asset
+        if: steps.gate_pre.outcome == 'success' && steps.state.outcome == 'success'
+        continue-on-error: true
+        run: |
+          bash scripts/release-gate.sh asset dist/Notepad.dmg "${{ steps.state.outputs.version }}"
+          echo "sha256=$(shasum -a 256 dist/Notepad.dmg | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Keep DMG as a run artifact
+        if: steps.gate_asset.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Notepad-dmg
+          path: dist/Notepad.dmg
+          if-no-files-found: ignore
+
+      # ── Regression gate, part 3: the cask downloads this asset name ──
+      - name: 'Gate: cask checks'
+        id: gate_cask
+        if: steps.state.outcome == 'success'
+        continue-on-error: true
         env:
           TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+        run: |
+          if [ -n "$TAP_TOKEN" ]; then
+            git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/jayclark5150/homebrew-tap.git"
+          else
+            git clone --depth 1 https://github.com/jayclark5150/homebrew-tap.git   # dry run: read-only
+          fi
+          bash scripts/release-gate.sh cask homebrew-tap/Casks/notepad.rb
+
+      - name: Publish GitHub release
+        id: publish
+        if: >-
+          env.DRY_RUN != 'true' && steps.state.outputs.mode == 'publish' &&
+          steps.gate_pre.outcome == 'success' && steps.gate_asset.outcome == 'success' &&
+          steps.gate_cask.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$TAG" dist/Notepad.dmg \
+            --verify-tag \
+            --title "${{ steps.state.outputs.version }}" \
+            --generate-notes
+
+      # ── Regression gate, part 4: what users download matches the hash ──
+      - name: 'Gate: published asset'
+        id: gate_published
+        if: >-
+          env.DRY_RUN != 'true' && steps.gate_pre.outcome == 'success' &&
+          steps.gate_asset.outcome == 'success' && steps.gate_cask.outcome == 'success' &&
+          steps.publish.outcome != 'failure'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "$TAG" --pattern Notepad.dmg --dir verify
+          bash scripts/release-gate.sh published verify/Notepad.dmg "${{ steps.gate_asset.outputs.sha256 }}"
+
+      - name: Update Homebrew tap
+        id: tap
+        if: env.DRY_RUN != 'true' && steps.gate_published.outcome == 'success'
+        working-directory: homebrew-tap
+        env:
+          VERSION: ${{ steps.state.outputs.version }}
+          SHA256: ${{ steps.gate_asset.outputs.sha256 }}
+        run: |
+          sed -i '' -E \
+            -e "s/^([[:space:]]*version[[:space:]]+)\"[^\"]*\"/\1\"$VERSION\"/" \
+            -e "s/^([[:space:]]*sha256[[:space:]]+)\"[^\"]*\"/\1\"$SHA256\"/" \
+            Casks/notepad.rb
+          bash ../scripts/release-gate.sh cask-final Casks/notepad.rb "$VERSION" "$SHA256"
+          brew style Casks/notepad.rb || echo "::warning::brew style reported offenses in Casks/notepad.rb"
+          if git diff --quiet; then
+            echo "Cask already at $VERSION / $SHA256: nothing to push"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -am "Update Notepad cask to $VERSION"
+          git push
+
+      - name: Report mode
+        if: always()
+        run: |
+          gates="pre=${{ steps.gate_pre.outcome }} state=${{ steps.state.outcome }} asset=${{ steps.gate_asset.outcome }} cask=${{ steps.gate_cask.outcome }} published=${{ steps.gate_published.outcome }}"
+          if echo "$gates" | grep -q failure; then
+            mode="PREVIEW (halted: regression gate failed)"
+          elif [ "${{ job.status }}" != "success" ]; then
+            mode="HALTED (a build, release or tap step failed; see the log)"
+          elif [ "$DRY_RUN" = "true" ]; then
+            mode="PREVIEW (dry run)"
+          elif [ "${{ steps.state.outputs.mode }}" = "publish" ]; then
+            mode="PUBLISH"
+          else
+            mode="TAP-SYNC"
+          fi
+          {
+            echo "### Release $TAG: $mode"
+            echo ""
+            echo "Gates: \`$gates\`"
+            echo ""
+            echo "Release: ${{ steps.publish.outcome }}  Tap: ${{ steps.tap.outcome }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Mode: $mode"
+          echo "Gates: $gates"
+          if echo "$gates" | grep -q failure || [ "${{ steps.tap.outcome }}" = "failure" ] \
+             || [ "${{ steps.publish.outcome }}" = "failure" ]; then
+            exit 1
+          fi
